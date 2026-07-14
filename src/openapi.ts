@@ -61,6 +61,57 @@ export const openApiSpec = {
         },
       },
     },
+    "/similar": {
+      get: {
+        summary: "Similar albums",
+        description:
+          "Return the albums AOTY lists as similar to a given album (the 'You May Also Like' section). Provide either slug (ID or full slug for direct lookup) or both artist and name (search-based lookup).",
+        operationId: "getSimilar",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          {
+            name: "slug",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "AOTY album ID or full slug (e.g. '2915' or '2915-outkast-aquemini'). Use this or artist+name.",
+            example: "2915",
+          },
+          {
+            name: "artist",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            example: "OutKast",
+          },
+          {
+            name: "name",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            example: "Aquemini",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "List of similar albums",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    albums: { type: "array", items: { $ref: "#/components/schemas/AlbumBlock" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "404": { $ref: "#/components/responses/NotFound" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
     "/releases": {
       get: {
         summary: "New album releases",

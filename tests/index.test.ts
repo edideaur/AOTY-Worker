@@ -116,6 +116,24 @@ describe("GET /album parameter validation", () => {
   });
 });
 
+describe("GET /similar parameter validation", () => {
+  it("returns 400 when both params missing", async () => {
+    const res = await fetch("/similar");
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when name missing", async () => {
+    const res = await fetch("/similar?artist=OutKast");
+    expect(res.status).toBe(400);
+  });
+
+  it("400 body has detail field (RFC 9457)", async () => {
+    const body = await (await fetch("/similar")).json() as { detail: string; status: number };
+    expect(body.detail).toContain("artist");
+    expect(body.status).toBe(400);
+  });
+});
+
 describe("GET /search parameter validation", () => {
   const searchPaths = ["/search", "/search/albums", "/search/artists", "/search/labels"];
 

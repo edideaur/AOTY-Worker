@@ -407,6 +407,25 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return detail;
   }
 
+  if (path === "/similar") {
+    const slug = q.get("slug");
+    const artist = q.get("artist");
+    const name = q.get("name");
+
+    let albumPath: string;
+    if (slug) {
+      albumPath = `/album/${slug}/`;
+    } else if (artist && name) {
+      const url = await findAlbumUrl(artist, name, opts);
+      if (!url) throw new ApiError("Album not found", 404);
+      albumPath = new URL(url).pathname;
+    } else {
+      throw new ApiError("Provide either slug (ID or full slug) or both artist and name", 400);
+    }
+
+    return { albums: await fetchAlbumBlocks(`${albumPath}similar/`, opts) };
+  }
+
   if (path === "/releases") {
     const page = getPage(q);
     return { page, albums: await fetchAlbumBlocks(`/releases/${page}/`, opts) };
