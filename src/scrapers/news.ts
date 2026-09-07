@@ -1,12 +1,12 @@
 import { BASE, FETCH_OPTS, decodeEntities, type FetchOpts } from "../constants.js";
-import type { NewsItem } from "../types.js";
+import type { NewsItem, RssFeed, RssFeedItem } from "../types.js";
 
 export async function scrapeNewsPage(url: string, opts: FetchOpts = FETCH_OPTS): Promise<NewsItem[]> {
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`News fetch failed: ${res.status}`);
 
   const items: NewsItem[] = [];
-  let current: Partial<NewsItem> | null = null;
+  let current: NewsItem | null = null;
 
   await new HTMLRewriter()
     .on(".mediaContainer", {
@@ -22,7 +22,7 @@ export async function scrapeNewsPage(url: string, opts: FetchOpts = FETCH_OPTS):
           likes: "",
           comments: "",
         };
-        items.push(current as NewsItem);
+        items.push(current);
       },
     })
     .on(".mediaContainer .content .title a", {
@@ -62,3 +62,38 @@ export async function scrapeNewsPage(url: string, opts: FetchOpts = FETCH_OPTS):
     comments: (item.comments ?? "").trim() || "0",
   }));
 }
+
+export async function scrapeNewsFeedXml(opts: FetchOpts = FETCH_OPTS): Promise<string> {
+  const res = await fetch(`${BASE}/feed/news.xml`, opts);
+  if (!res.ok) throw new Error(`News feed fetch failed: ${res.status}`);
+  return res.text();
+}
+
+export async function scrapeNewsFeed(opts: FetchOpts = FETCH_OPTS): Promise<RssFeed> {
+  const xml = await scrapeNewsFeedXml(opts);
+  const titleM = xml.match(/<title>([^<]*)<\/title>/);
+  const linkM = xml.match(/<link>([^<]*)<\/link>/);
+  const descM = xml.match(/<description>([^<]*)<\/description>/);
+  const items: RssFeedItem[] = [];
+  for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+    const itemXml = m[1];
+    if (!itemXml) continue;
+    const iTitle = itemXml.match(/<title>([^<]*)<\/title>/)?.[1] ?? "";
+    const iLink = itemXml.match(/<link>([^<]*)<\/link>/)?.[1] ?? "";
+    const iPubDate = itemXml.match(/<pubDate>([^<]*)<\/pubDate>/)?.[1] ?? null;
+    const iDesc = itemXml.match(/<description>([^<]*)<\/description>/)?.[1] ?? null;
+    items.push({
+      title: decodeEntities(iTitle.trim()),
+      link: iLink.trim(),
+      pubDate: iPubDate ? iPubDate.trim() : null,
+      description: iDesc ? decodeEntities(iDesc.trim()) : null,
+    });
+  }
+  return {
+    title: decodeEntities(titleM?.[1]?.trim() ?? "Album of the Year"),
+    link: linkM?.[1]?.trim() ?? `${BASE}/news/`,
+    description: descM?.[1] ? decodeEntities(descM[1].trim()) : null,
+    items,
+  };
+}
+

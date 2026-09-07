@@ -1,10 +1,8 @@
 import { describe, it, expect } from "bun:test";
 import worker from "../src/index.ts";
+import { createMockEnv } from "./test_utils.js";
 
-const mockEnv = {
-  aoty_cache: { get: async () => null, put: async () => {} },
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-} as any;
+const mockEnv = createMockEnv();
 
 function req(path: string, method = "GET"): Request {
   return new Request(`http://localhost${path}`, { method });
@@ -117,7 +115,7 @@ describe("GET /album parameter validation", () => {
 });
 
 describe("GET /search parameter validation", () => {
-  const searchPaths = ["/search", "/search/albums", "/search/artists", "/search/labels"];
+  const searchPaths = ["/search", "/search/albums", "/search/artists", "/search/labels", "/search/lists", "/search/news", "/search/tags", "/search/users"];
 
   for (const path of searchPaths) {
     it(`${path} returns 400 without q`, async () => {
@@ -131,6 +129,115 @@ describe("GET /search parameter validation", () => {
       expect(body.status).toBe(400);
     });
   }
+});
+
+describe("new endpoints parameter validation", () => {
+  const cases: Array<[string, number]> = [
+    ["/artist", 400],
+    ["/artist/similar", 400],
+    ["/artist/songs", 400],
+    ["/label", 400],
+    ["/genre", 400],
+    ["/tag", 400],
+    ["/tag?tag=hip+hop&type=bad", 400],
+    ["/publication", 400],
+    ["/publication/reviews", 400],
+    ["/publication/lists", 400],
+    ["/critic", 400],
+    ["/song", 400],
+    ["/song/ratings", 400],
+    ["/user", 400],
+    ["/user/ratings", 400],
+    ["/user/reviews", 400],
+    ["/user/lists", 400],
+    ["/user/list?username=x", 400],
+    ["/user/list", 400],
+    ["/user/listened", 400],
+    ["/user/library", 400],
+    ["/user/tags", 400],
+    ["/user/tags?username=x&scope=bad", 400],
+    ["/user/tags?username=x&sort=bad", 400],
+    ["/user/tag", 400],
+    ["/user/tag?username=x", 400],
+    ["/user/review?username=x", 400],
+    ["/user/review", 400],
+    ["/user-reviews?period=bad", 400],
+    ["/user-reviews?period=month&page=2", 400],
+    ["/top-artists?scope=bad", 400],
+    ["/ratings?source=6-highest-rated&genre=hip-hop", 400],
+    ["/news-item", 400],
+    ["/album/similar", 400],
+    ["/album/user-reviews", 400],
+    ["/album/user-reviews?slug=x&sort=bad", 400],
+    ["/album/comments", 400],
+    ["/album/comments/replies", 400],
+    ["/album/comments/replies?albumId=1998", 400],
+    ["/album/critic-reviews", 400],
+    ["/album/critic-reviews?slug=x&sort=bad", 400],
+    ["/album/tags", 400],
+    ["/album/user-lists", 400],
+    ["/album/critic-lists", 400],
+    ["/artist/news", 400],
+    ["/artist/news?slug=x&type=bad", 400],
+    ["/artist/credits", 400],
+    ["/publication/perfect", 400],
+    ["/user/followers", 400],
+    ["/user/following", 400],
+    ["/releases/vibe", 400],
+    ["/releases/vibe?vibe=anthemic&sort=bad", 400],
+    ["/album/rating-history", 400],
+    ["/album/distribution", 400],
+    ["/album/distribution?albumId=1998&format=bad", 400],
+    ["/guidelines?type=bad", 400],
+    ["/subgenres", 400],
+    ["/album/tags/autocomplete", 400],
+    ["/user/liked-albums", 400],
+    ["/labels/autocomplete", 400],
+    ["/label/autocomplete", 400],
+    ["/search/autocomplete", 400],
+    ["/user/genres", 400],
+    ["/user/badges", 400],
+  ];
+
+  for (const [path, status] of cases) {
+    it(`${path} returns ${status}`, async () => {
+      const res = await fetch(path);
+      expect(res.status).toBe(status);
+    });
+  }
+});
+
+describe("GET /openapi.json coverage", () => {
+  it("spec includes all expected API endpoints", async () => {
+    const body = await (await fetch("/openapi.json")).json() as { paths: Record<string, unknown> };
+    const specPaths = Object.keys(body.paths);
+    expect(specPaths.length).toBeGreaterThanOrEqual(76);
+
+    const required = [
+      "/album", "/album/similar", "/album/user-reviews", "/album/comments", "/album/comments/replies",
+      "/album/critic-reviews", "/album/tags", "/album/tags/autocomplete", "/album/rating-history", "/album/distribution",
+      "/album/user-lists", "/album/critic-lists",
+      "/artist", "/artist/similar", "/artist/songs", "/artist/news", "/artist/credits", "/random/artist", "/random/album", "/artists",
+      "/label", "/genres", "/genre", "/subgenres", "/tag",
+      "/publication", "/publication/reviews", "/publication/lists", "/publication/perfect", "/critic",
+      "/song", "/song/ratings", "/songs/top",
+      "/user", "/user/ratings", "/user/reviews", "/user/lists", "/user/list", "/user/review",
+      "/user/listened", "/user/library", "/user/liked-albums", "/user/tags", "/user/tag", "/user/followers", "/user/following",
+      "/user/genres", "/user/badges",
+      "/users", "/user-reviews", "/ratings", "/top-artists",
+      "/releases", "/releases/singles", "/releases/this-week", "/releases/by-date", "/releases/vibe",
+      "/recently-added", "/on-this-day", "/upcoming",
+      "/discover", "/discover/singles", "/discover/anticipated", "/discover/under-radar", "/discover/top-rated", "/discover/people",
+      "/must-hear", "/news", "/news-item", "/feed/news", "/feed/news.xml",
+      "/lists", "/lists/users", "/updates", "/home", "/stats", "/faq", "/guidelines", "/changelog",
+      "/search", "/search/albums", "/search/artists", "/search/labels", "/search/lists", "/search/news", "/search/tags", "/search/users",
+      "/search/autocomplete", "/labels/autocomplete"
+    ];
+
+    for (const p of required) {
+      expect(body.paths[p]).toBeDefined();
+    }
+  });
 });
 
 describe("response shape", () => {

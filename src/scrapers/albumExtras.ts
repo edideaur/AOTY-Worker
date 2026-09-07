@@ -1,5 +1,13 @@
 import { BASE, REQ_HEADERS, decodeEntities } from "../constants.js";
-import type { AlbumStats, CreditEntry, CreditSection } from "../types.js";
+import type {
+  AlbumStats,
+  CreditEntry,
+  CreditSection,
+  AlbumRatingHistory,
+  AlbumRatingMilestone,
+  AlbumDistribution,
+  AlbumDistributionRow,
+} from "../types.js";
 
 const EXTRAS_HEADERS: HeadersInit = {
   ...REQ_HEADERS,
@@ -18,7 +26,7 @@ export async function scrapeAlbumStats(albumId: string): Promise<AlbumStats | nu
     const text = await res.text();
     const nums = [...text.matchAll(/[\d,]+/g)]
       .map((m) => parseInt(m[0].replace(/,/g, ""), 10))
-      .filter((n) => !isNaN(n));
+      .filter((n) => !Number.isNaN(n));
     if (nums.length < 5) return null;
     return {
       favorites: nums[0] ?? null,
@@ -107,4 +115,125 @@ export async function scrapeAlbumCredits(albumId: string): Promise<CreditSection
   } catch {
     return null;
   }
+}
+
+export async function scrapeAlbumRatingHistory(albumId: string): Promise<AlbumRatingHistory> {
+  const res = await fetch(`${BASE}/scripts/ratingHistory.php`, {
+    method: "POST",
+    headers: EXTRAS_HEADERS,
+    body: `albumID=${albumId}`,
+  });
+  if (!res.ok) throw new Error(`Rating history fetch failed: ${res.status}`);
+
+  const milestones: AlbumRatingMilestone[] = [];
+  let cur: AlbumRatingMilestone | null = null;
+  let headline = "";
+
+  await new HTMLRewriter()
+    .on(".subHeadline.scoreTrend", {
+      text(t) {
+        headline += t.text;
+      },
+    })
+    .on(".ratingHistoryTable tr", {
+      element() {
+        cur = { milestone: "", date: null, score: "", exactScore: null };
+        milestones.push(cur);
+      },
+    })
+    .on(".ratingHistoryTable .historyLabel", {
+      text(t) {
+        if (cur && !cur.date) {
+          cur.milestone = (cur.milestone ?? "") + t.text;
+        }
+      },
+    })
+    .on(".ratingHistoryTable .historyLabel div", {
+      text(t) {
+        if (cur) cur.date = (cur.date ?? "") + t.text;
+      },
+    })
+    .on(".ratingHistoryTable .historyScore", {
+      element(el) {
+        if (cur) cur.exactScore = el.getAttribute("title") ?? null;
+      },
+      text(t) {
+        if (cur) cur.score = (cur.score ?? "") + t.text;
+      },
+    })
+    .transform(res)
+    .arrayBuffer();
+
+  return {
+    albumId,
+    headline: decodeEntities(headline.trim()),
+    milestones: milestones.map((m) => {
+      const rawM = (m.milestone ?? "").replace(m.date ?? "", "").trim();
+      return {
+        milestone: rawM,
+        date: (m.date ?? "").trim() || null,
+        score: (m.score ?? "").trim(),
+        exactScore: m.exactScore ? m.exactScore.trim() : null,
+      };
+    }),
+  };
+}
+
+export async function scrapeAlbumDistribution(albumId: string, format = "all"): Promise<AlbumDistribution> {
+  const res = await fetch(`${BASE}/scripts/changeDistribution.php`, {
+    method: "POST",
+    headers: EXTRAS_HEADERS,
+    body: new URLSearchParams({ type: "album", format, itemID: albumId }).toString(),
+  });
+  if (!res.ok) throw new Error(`Album distribution fetch failed: ${res.status}`);
+
+  const rows: AlbumDistributionRow[] = [];
+  let cur: AlbumDistributionRow | null = null;
+  let labelBuf = "";
+  let countBuf = "";
+
+  await new HTMLRewriter()
+    .on(".distRow", {
+      element() {
+        cur = { label: "", count: 0, percentage: null };
+        rows.push(cur);
+        labelBuf = "";
+        countBuf = "";
+      },
+    })
+    .on(".distRow .distLabel", {
+      text(t) {
+        labelBuf += t.text;
+      },
+      element(el) {
+        el.onEndTag(() => {
+          if (cur) cur.label = labelBuf.trim();
+        });
+      },
+    })
+    .on(".distRow .distCount", {
+      text(t) {
+        countBuf += t.text;
+      },
+      element(el) {
+        el.onEndTag(() => {
+          if (cur) cur.count = parseInt(countBuf.replace(/,/g, "").trim(), 10) || 0;
+        });
+      },
+    })
+    .on(".distRow .distBar", {
+      element(el) {
+        const style = el.getAttribute("style") ?? "";
+        const match = style.match(/width:\s*(\d+%)/);
+        if (cur && match?.[1]) cur.percentage = match[1];
+      },
+    })
+    .transform(res)
+    .arrayBuffer();
+
+  return {
+    albumId,
+    format,
+    rows,
+  };
 }

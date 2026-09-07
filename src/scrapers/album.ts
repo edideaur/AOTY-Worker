@@ -1,5 +1,17 @@
-import { BASE, FETCH_OPTS, decodeEntities, type FetchOpts } from "../constants.js";
-import type { AlbumDetail, CriticReview, StreamingLink, Track } from "../types.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, type FetchOpts } from "../constants.js";
+import type {
+  AlbumBlock,
+  AlbumDetail,
+  AlbumUserListPreview,
+  AotyComment,
+  CriticListRank,
+  CriticReview,
+  NamedLink,
+  StreamingLink,
+  Track,
+  UserReview,
+} from "../types.js";
+import { scrapeAlbumBlocks } from "./albumBlock.js";
 
 export async function findAlbumUrl(artist: string, name: string, opts: FetchOpts = FETCH_OPTS): Promise<string | null> {
   const q = encodeURIComponent(`${artist} - ${name}`);
@@ -25,6 +37,7 @@ export async function findAlbumUrl(artist: string, name: string, opts: FetchOpts
 export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_OPTS): Promise<AlbumDetail> {
   const res = await fetch(pageUrl, opts);
   if (!res.ok) throw new Error(`Album fetch failed: ${res.status}`);
+  const htmlPromise = res.clone().text();
 
   const s = {
     jsonLdText: "",
@@ -39,6 +52,8 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
     detailRowTexts: [] as string[],
     labels: [] as Array<{ name: string; url: string }>,
     tags: [] as string[],
+    vibes: [] as string[],
+    totalLength: null as string | null,
     streamingLinks: [] as StreamingLink[],
     tracks: [] as Array<Partial<Track>>,
     track: null as Partial<Track> | null,
@@ -87,6 +102,15 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
     })
     .on(".albumTopBox.info .detailRow a[href*='/tag/']", {
       text(t) { const v = t.text.trim(); if (v) s.tags.push(v); },
+    })
+    .on(".detailRow.vibes .vibe a", {
+      text(t) { const v = t.text.trim(); if (v) s.vibes.push(v); },
+    })
+    .on(".totalLength", {
+      text(t) {
+        const text = t.text.trim();
+        if (text) s.totalLength = (s.totalLength ?? "") + text;
+      },
     })
     .on(".albumLinksFlex a", {
       element(el) {
@@ -169,7 +193,7 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
     .on(".albumReviewHeader .author a", {
       text(t) { if (s.review) s.review.author += t.text; },
     })
-    .on(".albumReviewText *", {
+    .on(".albumReviewText", {
       text(t) { s.reviewTextBuf += t.text; },
     })
     .on(".albumReviewLinks .extLink a", {
@@ -195,13 +219,12 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
   const byArtist = jsonLd["byArtist"] as Record<string, string> | undefined;
   const extractNum = (raw: string): string => (raw.match(/[\d,]+/) ?? [""])[0];
 
-  const format = (() => {
-    const row = (s.detailRowTexts[1] ?? "").replace(/&nbsp;/g, " ").replace(/ /g, " ");
-    return row.split(/\/\s*Format/i)[0].trim().replace(/\s+/g, " ");
-  })();
+  const row = (s.detailRowTexts[1] ?? "").replace(/&nbsp;/g, " ").replace(/ /g, " ");
+  const format = row.split(/\/\s*Format/i)[0]?.trim().replace(/\s+/g, " ") ?? "";
 
-  const primaryLabel = s.labels.length > 0
-    ? { name: s.labels[0].name.trim(), url: s.labels[0].url }
+  const firstLabel = s.labels[0];
+  const primaryLabel = firstLabel
+    ? { name: firstLabel.name.trim(), url: firstLabel.url }
     : null;
 
   const cleanedTracks: Track[] = s.tracks
@@ -214,10 +237,239 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
       rating: t.rating ? t.rating.trim() : null,
       ratingCount: t.ratingCount ?? null,
       notes: t.notes ? decodeEntities(t.notes.trim()) : null,
-      features: (t.features ?? []).filter(Boolean).map(decodeEntities),
+      features: (t.features ?? []).map(decodeEntities),
     }));
+  const cleanedReviews = cleanCriticReviews(s.reviews);
+  const rawGenre = jsonLd["genre"];
+  const genres = Array.isArray(rawGenre) ? (rawGenre as string[]) : typeof rawGenre === "string" ? [rawGenre] : [];
 
-  const cleanedReviews: CriticReview[] = s.reviews
+  const html = await htmlPromise;
+  const producers: NamedLink[] = [];
+  const writers: NamedLink[] = [];
+  for (const m of html.matchAll(/<div class="detailRow">([\s\S]*?)<\/div>/g)) {
+    const rowContent = m[1];
+    if (!rowContent) continue;
+    if (rowContent.includes("Producer")) {
+      for (const link of rowContent.matchAll(/<a href="([^"]+)">([^<]*)<\/a>/g)) {
+        const u = link[1];
+        const n = link[2];
+        if (u?.includes("/artist/") && n !== undefined) {
+          producers.push({
+            name: decodeEntities(n.trim()),
+            url: u.startsWith("http") ? u : BASE + u,
+          });
+        }
+      }
+    } else if (rowContent.includes("Writer")) {
+      for (const link of rowContent.matchAll(/<a href="([^"]+)">([^<]*)<\/a>/g)) {
+        const u = link[1];
+        const n = link[2];
+        if (u?.includes("/artist/") && n !== undefined) {
+          writers.push({
+            name: decodeEntities(n.trim()),
+            url: u.startsWith("http") ? u : BASE + u,
+          });
+        }
+      }
+    }
+  }
+
+  // Contributions By
+  const contributionsBy: NamedLink[] = [];
+  const contribIdx = html.indexOf("Contributions By");
+  if (contribIdx !== -1) {
+    const contribChunk = html.slice(contribIdx, contribIdx + 3000);
+    // Find the end of this detail block / section (either next sectionHeading or end of detailRow)
+    const nextSection = contribChunk.search(/<\/div>\s*<\/div>|<div class="sectionHeading"|<div class="albumReviewRow"/);
+    const endChunk = nextSection !== -1 ? contribChunk.slice(0, nextSection) : (contribChunk.split("</div>")[0] ?? "");
+    for (const link of endChunk.matchAll(/<a href="([^"]*\/user\/[^"]*)"[^>]*>([^<]*)<\/a>/g)) {
+      const u = link[1];
+      const n = link[2];
+      if (u && n !== undefined) {
+        contributionsBy.push({
+          name: decodeEntities(n.trim()),
+          url: u.startsWith("http") ? u : BASE + u,
+        });
+      }
+    }
+  }
+
+  // Popular User Reviews & Recent User Reviews
+  const popIdx = html.indexOf("Popular User Reviews");
+  const recIdx = html.indexOf("Recent User Reviews");
+  const moreIdx = html.indexOf("More Albums");
+  const likeIdx = html.indexOf("You May Also Like");
+
+  let popularUserReviews: UserReview[] = [];
+  if (popIdx !== -1) {
+    const endPop = recIdx !== -1 ? recIdx : popIdx + 15000;
+    popularUserReviews = parseAlbumUserReviewRows(html.slice(popIdx, endPop));
+  }
+
+  let recentUserReviews: UserReview[] = [];
+  if (recIdx !== -1) {
+    const endRec = moreIdx !== -1 ? moreIdx : recIdx + 15000;
+    recentUserReviews = parseAlbumUserReviewRows(html.slice(recIdx, endRec));
+  }
+
+  // More Albums & Similar Albums
+  let moreAlbums: AlbumBlock[] = [];
+  if (moreIdx !== -1) {
+    const endMore = likeIdx !== -1 ? likeIdx : moreIdx + 15000;
+    moreAlbums = await scrapeAlbumBlocks(new Response(html.slice(moreIdx, endMore)));
+  }
+
+  let similarAlbums: AlbumBlock[] = [];
+  if (likeIdx !== -1) {
+    const tagsIdx = html.indexOf("Tags</div>", likeIdx);
+    const endLike = tagsIdx !== -1 ? tagsIdx : likeIdx + 15000;
+    similarAlbums = await scrapeAlbumBlocks(new Response(html.slice(likeIdx, endLike)));
+  }
+
+  // Right sidebar modules (Year End Lists, User Lists, Comments)
+  const rightBoxes = html.split("class=\"rightBox\"");
+  const yearEndLists: CriticListRank[] = [];
+  const userLists: AlbumUserListPreview[] = [];
+  const comments: AotyComment[] = [];
+
+  for (let i = 1; i < rightBoxes.length; i++) {
+    const box = rightBoxes[i];
+    if (!box) continue;
+    if (box.includes("Year End Lists")) {
+      for (const m of box.matchAll(/<tr>\s*<td class="rank">#<strong>(\d+)<\/strong><\/td>\s*<td class="divider">\/<\/td>\s*<td><a href="([^"]+)">([^<]+)<\/a><\/td>\s*<\/tr>/g)) {
+        const r = m[1];
+        const u = m[2];
+        const t = m[3];
+        if (r && u && t) {
+          yearEndLists.push({
+            rank: r,
+            url: u.startsWith("http") ? u : BASE + u,
+            publication: decodeEntities(t.trim()),
+            title: decodeEntities(t.trim()),
+            publicationUrl: null,
+            cover: null,
+          });
+        }
+      }
+    } else if (box.includes("User Lists")) {
+      for (const item of box.matchAll(/<div class="commentRow">([\s\S]*?)<\/div>\s*<\/div>/g)) {
+        const itemContent = item[1];
+        if (!itemContent) continue;
+        const listLink = itemContent.match(/<a href="([^"]*\/list\/[^"]*)">([^<]*)<\/a>/);
+        const userLink = itemContent.match(/By <a href="([^"]*\/user\/[^"]*)"[^>]*>([^<]*)<\/a>/);
+        const img = itemContent.match(/<img src="([^"]+)"/);
+        if (listLink?.[1] && listLink[2] !== undefined) {
+          userLists.push({
+            url: listLink[1].startsWith("http") ? listLink[1] : BASE + listLink[1],
+            title: decodeEntities(listLink[2].trim()),
+            userUrl: userLink?.[1] ? (userLink[1].startsWith("http") ? userLink[1] : BASE + userLink[1]) : "",
+            username: userLink?.[2] ? decodeEntities(userLink[2].trim()) : "",
+            avatar: img?.[1] ?? null,
+          });
+        }
+      }
+    } else if (box.includes("Comments (") || box.includes("commentList")) {
+      for (const m of box.matchAll(/<div class="commentRow" id="comment_(\d+)">([\s\S]*?)(?=<div class="commentRow" id="comment_|$)/g)) {
+        const id = m[1];
+        const c = m[2];
+        if (!id || !c) continue;
+        const userM = c.match(/<div class="commentUserName[^"]*"><a href="([^"]*)"[^>]*>([^<]*)<\/a>/);
+        const avatarM = c.match(/<div class="commentImage[^"]*"><a[^>]*><img src="([^"]*)"/);
+        const dateM = c.match(/<div class="commentDate"[^>]*title="([^"]*)"[^>]*>([^<]*)<\/div>/);
+        const textM = c.match(/<div class="commentText[^"]*">([\s\S]*?)<\/div>/);
+        const repliesM = c.match(/<button class="showReplies"[^>]*>[\s\S]*?<span>(\d+)<\/span>/);
+        comments.push({
+          id,
+          username: userM?.[2] ? decodeEntities(userM[2].trim()) : "",
+          userUrl: userM?.[1] ? (userM[1].startsWith("http") ? userM[1] : BASE + userM[1]) : "",
+          avatar: avatarM?.[1] ?? null,
+          date: dateM?.[2] ? dateM[2].trim() : "",
+          dateExact: dateM?.[1] ? dateM[1].trim() : "",
+          text: textM?.[1] ? decodeEntities(textM[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()) : "",
+          replies: repliesM?.[1] ? repliesM[1] : "0",
+        });
+      }
+    }
+  }
+
+  return {
+    url: pageUrl,
+    id: s.albumId,
+    title: decodeEntities(String(jsonLd["name"] ?? "")),
+    artist: decodeEntities(byArtist?.["name"] ?? ""),
+    artistUrl: byArtist?.["url"] ? (byArtist["url"].startsWith("http") ? byArtist["url"] : `${BASE}${byArtist["url"]}`) : "",
+    cover: String(jsonLd["image"] ?? ""),
+    datePublished: String(jsonLd["datePublished"] ?? ""),
+    format,
+    label: primaryLabel?.name ?? null,
+    labelUrl: primaryLabel?.url ?? null,
+    labels: s.labels.map((l) => ({ name: decodeEntities(l.name.trim()), url: l.url })),
+    genres,
+    tags: [...new Set(s.tags)],
+    vibes: [...new Set(s.vibes)],
+    producers,
+    writers,
+    totalLength: s.totalLength ? s.totalLength.replace(/^Total Length:\s*/i, "").trim() : null,
+    criticScore: s.criticScoreDisplay.trim() || null,
+    criticScoreExact: s.criticScoreExact || null,
+    criticCount: extractNum(s.criticCountRaw) || null,
+    userScore: s.userScoreDisplay.trim() || null,
+    userScoreExact: s.userScoreExact || null,
+    userCount: extractNum(s.userCountRaw) || null,
+    tracklist: cleanedTracks,
+    streamingLinks: s.streamingLinks,
+    reviews: cleanedReviews,
+    popularUserReviews,
+    recentUserReviews,
+    moreAlbums,
+    similarAlbums,
+    contributionsBy,
+    yearEndLists,
+    userLists,
+    comments,
+    stats: null,
+    credits: null,
+  };
+}
+
+function parseAlbumUserReviewRows(htmlChunk: string): UserReview[] {
+  const reviews: UserReview[] = [];
+  const rows = [...htmlChunk.matchAll(/<div class="albumReviewRow[^"]*" id="review_(\d+)">([\s\S]*?)(?=<div class="albumReviewRow|<div style="text-align:center;"|$)/g)];
+  for (const r of rows) {
+    const content = r[2];
+    if (!content) continue;
+    const userM = content.match(/class="userReviewName"[^>]*><a\s+href="([^"]*)"[^>]*>([^<]*)<\/a>/);
+    const avatarM = content.match(/class="userReviewImage"[^>]*><a[^>]*><img\s+src="([^"]*)"/);
+    const ratingM = content.match(/class="rating"[^>]*>([^<]*)<\/div>/);
+    const textM = content.match(/class="albumReviewText\s+user"[^>]*><p>([\s\S]*?)<\/div>/);
+    const likesM = content.match(/class="review_likes"[^>]*>([^<]*)<\/div>/);
+    const commentsM = content.match(/class="comment_count"[^>]*>([^<]*)<\/div>/);
+    const dateM = content.match(/class="review_date"[^>]*>([^<]*)<\/div>/);
+    const userUrl = userM?.[1] ? (userM[1].startsWith("http") ? userM[1] : BASE + userM[1]) : "";
+    const revUrlMatch = content.match(/href="([^"]*\/user\/[^"]*\/album\/[^"]*)"/);
+    const revUrl = revUrlMatch?.[1] ? (revUrlMatch[1].startsWith("http") ? revUrlMatch[1] : BASE + revUrlMatch[1]) : "";
+    reviews.push({
+      url: revUrl,
+      artist: "",
+      artistUrl: "",
+      album: "",
+      albumUrl: "",
+      cover: null,
+      username: userM?.[2] ? decodeEntities(userM[2].trim()) : "",
+      userUrl,
+      avatar: avatarM?.[1] ? avatarM[1] : null,
+      rating: ratingM?.[1] ? ratingM[1].trim() : null,
+      text: textM?.[1] ? decodeEntities(textM[1].replace(/<[^>]+>/g, " ").replace(/read more\s*$/i, "").replace(/\s+/g, " ").trim()) : "",
+      likes: likesM?.[1] ? likesM[1].trim() : "0",
+      comments: commentsM?.[1] ? commentsM[1].trim() : "0",
+      date: dateM?.[1] ? dateM[1].trim() : null,
+    });
+  }
+  return reviews;
+}
+
+function cleanCriticReviews(reviews: Array<Partial<CriticReview>>): CriticReview[] {
+  return reviews
     .filter((r) => (r.publication ?? "").trim())
     .map((r) => ({
       score: (r.score ?? "").trim(),
@@ -228,30 +480,115 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
       url: r.url ?? "",
       date: r.date ?? "",
     }));
-
-  return {
-    url: pageUrl,
-    id: s.albumId,
-    title: decodeEntities(String(jsonLd["name"] ?? "")),
-    artist: decodeEntities(byArtist?.name ?? ""),
-    artistUrl: byArtist?.url ? (byArtist.url.startsWith("http") ? byArtist.url : `${BASE}${byArtist.url}`) : "",
-    cover: String(jsonLd["image"] ?? ""),
-    datePublished: String(jsonLd["datePublished"] ?? ""),
-    format,
-    label: primaryLabel?.name ?? null,
-    labelUrl: primaryLabel?.url ?? null,
-    genres: (() => { const g = jsonLd["genre"]; return Array.isArray(g) ? g as string[] : typeof g === "string" ? [g] : []; })(),
-    tags: [...new Set(s.tags)],
-    criticScore: s.criticScoreDisplay.trim() || null,
-    criticScoreExact: s.criticScoreExact || null,
-    criticCount: extractNum(s.criticCountRaw) || null,
-    userScore: s.userScoreDisplay.trim() || null,
-    userScoreExact: s.userScoreExact || null,
-    userCount: extractNum(s.userCountRaw) || null,
-    tracklist: cleanedTracks,
-    streamingLinks: s.streamingLinks,
-    reviews: cleanedReviews,
-    stats: null,
-    credits: null,
-  };
 }
+
+export async function scrapeAlbumCriticReviews(
+  slug: string,
+  sort: string,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<{ slug: string; sort: string; reviews: CriticReview[] }> {
+  const idM = slug.match(/^(\d+)/);
+  if (!idM?.[1]) throw new Error("Album slug must start with the numeric album ID");
+  const albumId = idM[1];
+  const body = new URLSearchParams({ sort, id: albumId, year: "" }).toString();
+  const res = await fetch(`${BASE}/scripts/criticSort.php`, {
+    ...opts,
+    method: "POST",
+    headers: { ...REQ_HEADERS, "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest", Referer: `${BASE}/album/${slug}/` },
+    body,
+  });
+  if (!res.ok) throw new Error(`Critic reviews fetch failed: ${res.status}`);
+  const reviews: Array<Partial<CriticReview>> = [];
+  const st: { review: Partial<CriticReview> | null; textBuf: string; actionCount: number } = { review: null, textBuf: "", actionCount: 0 };
+  await new HTMLRewriter()
+    .on(".albumReviewRow", {
+      element() {
+        if (st.review) st.review.text = st.textBuf.trim();
+        st.review = { score: "", publication: "", author: "", text: "", image: "", url: "", date: "" };
+        reviews.push(st.review);
+        st.textBuf = "";
+        st.actionCount = 0;
+      },
+    })
+    .on(".albumReviewRating", {
+      text(t) { if (st.review) st.review.score = (st.review.score ?? "") + t.text; },
+    })
+    .on(".albumReviewImage img", {
+      element(el) { if (st.review) st.review.image = el.getAttribute("src") ?? ""; },
+    })
+    .on(".albumReviewHeader .publication a", {
+      text(t) { if (st.review) st.review.publication = (st.review.publication ?? "") + t.text; },
+    })
+    .on(".albumReviewHeader .author a", {
+      text(t) { if (st.review) st.review.author = (st.review.author ?? "") + t.text; },
+    })
+    .on(".albumReviewText", {
+      text(t) { st.textBuf += t.text; },
+    })
+    .on(".albumReviewLinks .extLink a", {
+      element(el) { if (st.review) st.review.url = el.getAttribute("href") ?? ""; },
+    })
+    .on(".albumReviewLinks .actionContainer", {
+      element(el) {
+        st.actionCount++;
+        if (st.actionCount === 2 && st.review) {
+          st.review.date = el.getAttribute("title") ?? "";
+        }
+      },
+    })
+    .transform(res)
+    .arrayBuffer();
+  if (st.review) st.review.text = st.textBuf.trim();
+  return { slug, sort, reviews: cleanCriticReviews(reviews) };
+}
+
+export async function scrapeAlbumTags(slug: string, opts: FetchOpts = FETCH_OPTS): Promise<{ slug: string; tags: NamedLink[] }> {
+  const idM = slug.match(/^(\d+)/);
+  if (!idM) throw new Error("Album slug must start with the numeric album ID");
+  const res = await fetch(`${BASE}/scripts/moreTags.php`, {
+    ...opts,
+    method: "POST",
+    headers: { ...REQ_HEADERS, "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest", Referer: `${BASE}/album/${slug}/` },
+    body: `albumID=${idM[1]}`,
+  });
+  if (!res.ok) throw new Error(`Album tags fetch failed: ${res.status}`);
+  const tags: NamedLink[] = [];
+  let cur: NamedLink | null = null;
+  await new HTMLRewriter()
+    .on(".tag a", {
+      element(el) {
+        const href = el.getAttribute("href") ?? "";
+        if (href.includes("/tag/")) {
+          cur = { name: "", url: href.startsWith("http") ? href : BASE + href };
+          tags.push(cur);
+        }
+      },
+      text(t) {
+        if (cur) cur.name += t.text;
+      },
+    })
+    .transform(res)
+    .arrayBuffer();
+  return { slug, tags: tags.map((t) => ({ name: decodeEntities(t.name.trim()), url: t.url })) };
+}
+
+export async function scrapeRandomAlbum(opts: FetchOpts = FETCH_OPTS): Promise<AlbumDetail> {
+  const res = await fetch(`${BASE}/random/`, opts);
+  if (!res.ok) throw new Error(`Random album fetch failed: ${res.status}`);
+  const html = await res.text();
+  const refreshM = html.match(/content="0;\s*url=([^"?]+)/i);
+  if (!refreshM?.[1]) throw new Error("Could not find redirect URL on random album page");
+  const url = refreshM[1].trim();
+  return scrapeAlbumPage(url, opts);
+}
+
+export async function scrapeAlbumTagAutocomplete(query: string, opts: FetchOpts = FETCH_OPTS): Promise<string[]> {
+  const res = await fetch(`${BASE}/scripts/albumTagAutocomplete.php?q=${encodeURIComponent(query)}`, {
+    ...opts,
+    headers: { ...REQ_HEADERS, "X-Requested-With": "XMLHttpRequest", Referer: `${BASE}/` },
+  });
+  if (!res.ok) throw new Error(`Tag autocomplete fetch failed: ${res.status}`);
+  const data = (await res.json()) as Array<{ value: string }>;
+  return data.map((item) => decodeEntities(item.value.trim())).filter(Boolean);
+}
+

@@ -6,13 +6,13 @@ export async function scrapeListsIndex(url: string, opts: FetchOpts = FETCH_OPTS
   if (!res.ok) throw new Error(`Lists fetch failed: ${res.status}`);
 
   const entries: ListEntry[] = [];
-  let current: Partial<ListEntry> | null = null;
+  let current: ListEntry | null = null;
 
   await new HTMLRewriter()
     .on(".listColumn .listPub", {
       element() {
         current = { url: "", title: "", publication: "", cover: null };
-        entries.push(current as ListEntry);
+        entries.push(current);
       },
     })
     .on(".listColumn .listPub > a", {
@@ -44,14 +44,16 @@ export async function scrapeListsIndex(url: string, opts: FetchOpts = FETCH_OPTS
   }));
 }
 
+type RawListDetailItem = Omit<ListDetailItem, "artist" | "album">;
+
 export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS): Promise<{ title: string; sourceUrl: string; items: ListDetailItem[] }> {
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`List detail fetch failed: ${res.status}`);
 
   let listTitle = "";
   let sourceUrl = "";
-  const items: ListDetailItem[] = [];
-  let current: Partial<ListDetailItem> | null = null;
+  const items: RawListDetailItem[] = [];
+  let current: RawListDetailItem | null = null;
 
   await new HTMLRewriter()
     .on(".listHeader h1.headline", {
@@ -62,8 +64,20 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
     })
     .on(".albumListRow", {
       element() {
-        current = { rank: "", title: "", url: "", cover: "", date: "", genres: [] };
-        items.push(current as ListDetailItem);
+        current = {
+          rank: "",
+          title: "",
+          url: "",
+          cover: "",
+          date: "",
+          genres: [],
+          score: null,
+          scoreExact: null,
+          ratingCount: null,
+          blurb: null,
+          otherLists: null,
+        };
+        items.push(current);
       },
     })
     .on(".albumListRank span[itemprop='position']", {
@@ -81,6 +95,14 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
     .on(".albumListCover img", {
       element(el) { if (current) current.cover = el.getAttribute("src") ?? ""; },
     })
+    .on(".albumListCover .otherLists", {
+      text(t) {
+        if (current) {
+          const m = t.text.match(/(\d+)/);
+          if (m?.[1]) current.otherLists = parseInt(m[1], 10);
+        }
+      },
+    })
     .on(".albumListDate", {
       text(t) { if (current) current.date += t.text; },
     })
@@ -90,19 +112,52 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
         if (current && name) current.genres?.push(name);
       },
     })
+    .on(".albumListScoreContainer .scoreValue", {
+      text(t) {
+        if (current) current.score = (current.score ?? "") + t.text;
+      },
+    })
+    .on(".albumListScoreContainer .scoreValueContainer", {
+      element(el) {
+        if (current) current.scoreExact = el.getAttribute("title") ?? null;
+      },
+    })
+    .on(".albumListScoreContainer .scoreText", {
+      text(t) {
+        if (current) current.ratingCount = (current.ratingCount ?? "") + t.text;
+      },
+    })
+    .on(".albumListBlurb p", {
+      text(t) {
+        if (current) current.blurb = (current.blurb ?? "") + t.text;
+      },
+    })
     .transform(res)
     .arrayBuffer();
 
   return {
     title: listTitle.trim(),
     sourceUrl,
-    items: items.map((item) => ({
-      rank: (item.rank ?? "").trim(),
-      title: decodeEntities((item.title ?? "").trim()),
-      url: item.url ?? "",
-      cover: item.cover ?? "",
-      date: (item.date ?? "").trim(),
-      genres: [...new Set(item.genres.map((g) => g.trim()).filter(Boolean))],
-    })),
+    items: items.map((item) => {
+      const rawTitle = decodeEntities((item.title ?? "").trim());
+      const dashIdx = rawTitle.indexOf(" - ");
+      const artist = dashIdx > -1 ? rawTitle.slice(0, dashIdx).trim() : "";
+      const album = dashIdx > -1 ? rawTitle.slice(dashIdx + 3).trim() : rawTitle;
+      return {
+        rank: (item.rank ?? "").trim(),
+        artist,
+        album,
+        title: rawTitle,
+        url: item.url ?? "",
+        cover: item.cover ?? "",
+        date: (item.date ?? "").trim(),
+        genres: [...new Set((item.genres ?? []).map((g) => g.trim()).filter(Boolean))],
+        score: (item.score ?? "").trim() || null,
+        scoreExact: item.scoreExact ?? null,
+        ratingCount: (item.ratingCount ?? "").replace(/reviews?|ratings?/gi, "").trim() || null,
+        blurb: item.blurb ? decodeEntities(item.blurb.trim()) : null,
+        otherLists: item.otherLists ?? null,
+      };
+    }),
   };
 }

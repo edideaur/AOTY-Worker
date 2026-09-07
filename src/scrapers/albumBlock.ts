@@ -3,7 +3,7 @@ import type { AlbumBlock } from "../types.js";
 
 export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
   const albums: AlbumBlock[] = [];
-  let cur: Partial<AlbumBlock> | null = null;
+  let cur: AlbumBlock | null = null;
   let ratingValue = "";
   let lastRatingType: "critic" | "user" | null = null;
 
@@ -23,7 +23,7 @@ export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
           userCount: null,
           mustHear: false,
         };
-        albums.push(cur as AlbumBlock);
+        albums.push(cur);
         lastRatingType = null;
         ratingValue = "";
       },

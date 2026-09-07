@@ -1,0 +1,17 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "complexity": {
+        "useLiteralKeys": "off"
+      }
+    }
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "files": {
+    "includes": ["src/**/*.ts"]
+  }
+}

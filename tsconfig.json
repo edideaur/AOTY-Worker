@@ -6,9 +6,14 @@
     "lib": ["ES2022"],
     "types": ["@cloudflare/workers-types"],
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "verbatimModuleSyntax": true,
     "noImplicitReturns": true,
     "resolveJsonModule": true,
-    "skipLibCheck": true
+    "skipLibCheck": false
   },
   "include": ["src/**/*.ts"]
 }

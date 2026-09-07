@@ -2,11 +2,64 @@ import { BASE, FETCH_OPTS, FETCH_OPTS_FRESH, RES_HEADERS, PROBLEM_HEADERS, type 
 import { openApiSpec } from "./openapi.js";
 import { POSTMAN_BODY } from "./postman.js";
 import { scrapeAlbumBlocks } from "./scrapers/albumBlock.js";
-import { findAlbumUrl, scrapeAlbumPage } from "./scrapers/album.js";
-import { scrapeNewsPage } from "./scrapers/news.js";
+import { findAlbumUrl, scrapeAlbumCriticReviews, scrapeAlbumPage, scrapeAlbumTags, scrapeRandomAlbum, scrapeAlbumTagAutocomplete } from "./scrapers/album.js";
+import { scrapeNewsPage, scrapeNewsFeed, scrapeNewsFeedXml } from "./scrapers/news.js";
 import { scrapeListsIndex, scrapeListDetail } from "./scrapers/lists.js";
-import { scrapeArtistSearch, scrapeLabelSearch } from "./scrapers/search.js";
-import { scrapeAlbumStats, scrapeAlbumCredits } from "./scrapers/albumExtras.js";
+import { scrapeArtistSearch, scrapeLabelAutocomplete, scrapeLabelSearch, scrapeSearchAutocomplete, scrapeUserSearch } from "./scrapers/search.js";
+import { scrapeAlbumStats, scrapeAlbumCredits, scrapeAlbumRatingHistory, scrapeAlbumDistribution } from "./scrapers/albumExtras.js";
+import { scrapeArtistPage, scrapeArtistTopSongs, scrapeSimilarArtists, scrapeArtistNews, scrapeArtistCredits, listArtistCreditRoles, scrapeRandomArtist } from "./scrapers/artist.js";
+import {
+  scrapeArtistsOverview,
+  scrapeCriticPage,
+  scrapeGenrePage,
+  scrapeGenresIndex,
+  scrapeLabelPage,
+  scrapePublicationListsPage,
+  scrapePublicationPage,
+  scrapePublicationPerfect,
+  scrapePublicationReviewsPage,
+  scrapeSubGenres,
+  scrapeTagPage,
+} from "./scrapers/entities.js";
+import { scrapeSongPage, scrapeSongRatingsPage, scrapeTopSongs } from "./scrapers/song.js";
+import { scrapeRatingsChart, scrapeTopArtists } from "./scrapers/charts.js";
+import {
+  scrapeAlbumCommentReplies,
+  scrapeAlbumCriticLists,
+  scrapeAlbumUserLists,
+  scrapeAlbumSubAlbums,
+  scrapeChangelog,
+  scrapeCommentsPage,
+  scrapeFaq,
+  scrapeGuidelines,
+  scrapeHomepage,
+  scrapeNewsDetail,
+  scrapeSearchNews,
+  scrapeSearchTags,
+  scrapeSiteStats,
+  scrapeSiteUpdates,
+} from "./scrapers/social.js";
+import {
+  scrapeAlbumUserReviews,
+  scrapeFollowList,
+  scrapeSearchLists,
+  scrapeUserBadges,
+  scrapeUserGenres,
+  scrapeUserLibrary,
+  scrapeUserLikedAlbums,
+  scrapeUserListDetail,
+  scrapeUserListened,
+  scrapeUserLists,
+  scrapeUserListsIndex,
+  scrapeUserProfile,
+  scrapeUserRatings,
+  scrapeUserReviewBlocks,
+  scrapeUserReviewDetail,
+  scrapeUserReviewsPage,
+  scrapeUserTagDetail,
+  scrapeUserTags,
+  scrapeUsersCommunity,
+} from "./scrapers/user.js";
 
 const OPENAPI_BODY = JSON.stringify(openApiSpec);
 
@@ -24,13 +77,13 @@ function corsOptions(): Response {
   return new Response(null, { status: 204, headers: RES_HEADERS });
 }
 
-function toYaml(val: unknown, indent = 0): string {
+export function toYaml(val: unknown, indent = 0): string {
   const pad = "  ".repeat(indent);
   if (val === null) return "null";
   if (typeof val === "boolean" || typeof val === "number") return String(val);
   if (typeof val === "string") {
     // quote strings containing special YAML chars or starting with special chars
-    if (/[:{}\[\],#&*?|<>=!%@`]/.test(val) || /^[-?]/.test(val) || val.includes("\n"))
+    if (/[:{}[],#&*?|<>=!%@`]/.test(val) || /^[-?]/.test(val) || val.includes("\n"))
       return `"${val.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
     return val;
   }
@@ -43,7 +96,7 @@ function toYaml(val: unknown, indent = 0): string {
   if (entries.length === 0) return "{}";
   return entries
     .map(([k, v]) => {
-      const key = /[:{}\[\],#&*?|<>=!%@`\s]/.test(k) ? `"${k}"` : k;
+      const key = /[:{}[],#&*?|<>=!%@`\s]/.test(k) ? `"${k}"` : k;
       const rendered = toYaml(v, indent + 1);
       return typeof v === "object" && v !== null && !Array.isArray(v) && Object.keys(v).length > 0
         ? `\n${pad}${key}:${rendered}`
@@ -78,14 +131,23 @@ const TTL = {
 
 function computeTtl(path: string, q: URLSearchParams, data: unknown): number | undefined {
   // News + live listings refresh constantly
-  if (path === "/news"
-    || path === "/releases" || path === "/releases/singles"
-    || path === "/discover" || path === "/discover/singles"
-    || path === "/discover/anticipated" || path === "/discover/under-radar"
+  if (path === "/news" || path === "/news-item" || path === "/feed/news" || path === "/feed/news.xml"
+    || path === "/releases" || path === "/releases/singles" || path === "/releases/this-week"
+    || path === "/releases/by-date" || path === "/releases/vibe" || path === "/recently-added" || path === "/on-this-day"
+    || path === "/discover" || path === "/discover/singles" || path === "/discover/people"
+    || path === "/discover/anticipated" || path === "/discover/under-radar" || path === "/discover/top-rated"
+    || path === "/updates" || path === "/users" || path === "/user-reviews" || path === "/home"
   ) return TTL.HOUR;
 
-  // Upcoming / search / current-year must-hear: 24 h
-  if (path === "/upcoming" || path.startsWith("/search")) return TTL.DAY;
+  // Upcoming / search / current-year charts / user content: 24 h
+  if (path === "/upcoming" || path.startsWith("/search") || path === "/ratings"
+    || path === "/top-artists" || path === "/songs/top"
+    || path === "/labels/autocomplete" || path === "/label/autocomplete"
+    || path === "/user/ratings" || path === "/user/reviews" || path === "/user/lists"
+    || path === "/user/listened" || path === "/user/library" || path === "/user/liked-albums"
+    || path === "/user/tags" || path === "/user/tag" || path === "/user/genres" || path === "/user/badges"
+    || path.startsWith("/album/") || path === "/genre" || path === "/tag"
+  ) return TTL.DAY;
 
   if (path === "/must-hear") {
     const year = q.get("year");
@@ -100,6 +162,30 @@ function computeTtl(path: string, q: URLSearchParams, data: unknown): number | u
     if (year && parseInt(year, 10) < new Date().getFullYear()) return TTL.MONTH;
     return TTL.WEEK;
   }
+
+  if (path === "/artists") return TTL.HOUR;
+
+  if (path === "/faq") return TTL.MONTH;
+
+  if (path === "/stats") return TTL.HOUR;
+
+  if (path === "/guidelines") return TTL.MONTH;
+
+  if (path === "/changelog" || path === "/lists/users") return TTL.WEEK;
+
+  if (
+    path === "/album/user-lists"
+    || path === "/album/critic-lists"
+    || path === "/album/critic-reviews"
+    || path === "/album/tags"
+    || path === "/album/rating-history"
+    || path === "/album/distribution"
+    || path === "/publication/perfect"
+  ) return TTL.MONTH;
+
+  if (path === "/artist/credits" || path === "/artist/news") return TTL.DAY;
+
+  if (path === "/user/followers" || path === "/user/following") return TTL.DAY;
 
   if (path.startsWith("/list/")) return TTL.MONTH;
 
@@ -117,17 +203,47 @@ function computeTtl(path: string, q: URLSearchParams, data: unknown): number | u
   return TTL.DAY;
 }
 
-function buildCacheKey(url: URL): string {
+export function buildCacheKey(url: URL): string {
   const qs = new URLSearchParams(
     [...url.searchParams.entries()].filter(([k]) => k !== "cache" && k !== "").sort()
   ).toString();
   return qs ? `${url.pathname}?${qs}` : url.pathname;
 }
 
-function getRequiredParam(q: URLSearchParams, key: string): string {
+export function getRequiredParam(q: URLSearchParams, key: string): string {
   const value = q.get(key);
   if (!value) throw new ApiError(`Missing required parameter: ${key}`, 400);
   return value;
+}
+
+export function hasControlChars(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if ((code >= 0 && code <= 31) || code === 127) return true;
+  }
+  return false;
+}
+
+export function normSlug(raw: string, keepSlashes = false): string {
+  if (hasControlChars(raw)) {
+    throw new ApiError("Invalid slug", 400);
+  }
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    throw new ApiError("Invalid URI encoding in slug", 400);
+  }
+  if (hasControlChars(decoded)) {
+    throw new ApiError("Invalid slug", 400);
+  }
+  let slug = decoded.trim().replace(/^\/+|\/+$/g, "");
+  if (!keepSlashes) slug = slug.replace(/\/+$/, "");
+  if (!slug) throw new ApiError("Slug cannot be empty", 400);
+  if (slug.includes("..")) {
+    throw new ApiError("Invalid slug", 400);
+  }
+  return slug;
 }
 
 const PAGE_NAV = `<style>
@@ -367,9 +483,12 @@ function htmlPage(body: string): Response {
   });
 }
 
-function getPage(q: URLSearchParams): number {
-  const n = parseInt(q.get("page") ?? "1", 10);
-  return n >= 1 ? n : 1;
+export function getPage(q: URLSearchParams): number {
+  const raw = q.get("page");
+  if (!raw) return 1;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || Number.isNaN(n) || n < 1) return 1;
+  return Math.min(n, 1000);
 }
 
 async function fetchAlbumBlocks(aotyPath: string, opts: FetchOpts) {
@@ -380,13 +499,14 @@ async function fetchAlbumBlocks(aotyPath: string, opts: FetchOpts) {
 
 async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise<unknown> {
   if (path === "/album") {
-    const slug = q.get("slug");
+    const rawSlug = q.get("slug");
     const artist = q.get("artist");
     const name = q.get("name");
     const minimal = q.get("minimal") === "true";
 
     let albumUrl: string | null;
-    if (slug) {
+    if (rawSlug) {
+      const slug = normSlug(rawSlug);
       albumUrl = `${BASE}/album/${slug}/`;
     } else if (artist && name) {
       albumUrl = await findAlbumUrl(artist, name, opts);
@@ -439,18 +559,20 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
   }
 
   if (path === "/must-hear") {
-    const year = q.get("year");
-    const decade = q.get("decade");
+    const rawYear = q.get("year");
+    const rawDecade = q.get("decade");
     const page = getPage(q);
 
     let aotyPath: string;
     let periodLabel: string;
-    if (year) {
-      periodLabel = year;
-      aotyPath = page > 1 ? `/must-hear/${year}/page/${page}/` : `/must-hear/${year}/`;
-    } else if (decade) {
-      periodLabel = decade;
-      aotyPath = `/must-hear/${decade}/`;
+    if (rawYear) {
+      if (!/^\d{4}$/.test(rawYear.trim())) throw new ApiError("Invalid year format", 400);
+      periodLabel = rawYear.trim();
+      aotyPath = page > 1 ? `/must-hear/${periodLabel}/page/${page}/` : `/must-hear/${periodLabel}/`;
+    } else if (rawDecade) {
+      if (!/^\d{4}s$/.test(rawDecade.trim())) throw new ApiError("Invalid decade format", 400);
+      periodLabel = rawDecade.trim();
+      aotyPath = page > 1 ? `/must-hear/${periodLabel}/page/${page}/` : `/must-hear/${periodLabel}/`;
     } else {
       periodLabel = "all";
       aotyPath = "/must-hear/";
@@ -467,44 +589,558 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return { page, type: feedType, items: await scrapeNewsPage(`${BASE}/l/${feedType}/${page}/`, opts) };
   }
 
+  if (path === "/feed/news") {
+    return scrapeNewsFeed(opts);
+  }
+
   if (path === "/lists") {
     const year = q.get("year");
-    const aotyUrl = year ? `${BASE}/lists.php?y=${year}` : `${BASE}/lists.php`;
-    return { year: year ? parseInt(year, 10) : null, lists: await scrapeListsIndex(aotyUrl, opts) };
+    const sort = q.get("sort");
+    const page = getPage(q);
+    const params = new URLSearchParams();
+    if (year) params.set("y", year);
+    if (sort) params.set("sort", sort);
+    if (page > 1) params.set("p", String(page));
+    const qs = params.toString();
+    const aotyUrl = qs ? `${BASE}/lists.php?${qs}` : `${BASE}/lists.php`;
+    return { year: year ? parseInt(year, 10) : null, sort: sort ?? null, page, lists: await scrapeListsIndex(aotyUrl, opts) };
   }
 
   const listMatch = path.match(/^\/list\/(.+)$/);
-  if (listMatch) {
-    return scrapeListDetail(`${BASE}/list/${listMatch[1]}/`, opts);
+  if (listMatch?.[1]) {
+    const slug = normSlug(listMatch[1]);
+    return scrapeListDetail(`${BASE}/list/${slug}/`, opts);
   }
 
   if (path === "/search") {
     const queryStr = getRequiredParam(q, "q");
     const enc = encodeURIComponent(queryStr);
-    const [albums, artists, labels] = await Promise.all([
+    const [albums, artists, labels, lists, news, tags, users] = await Promise.all([
       fetchAlbumBlocks(`/search/albums/?q=${enc}`, opts),
       scrapeArtistSearch(`${BASE}/search/artists/?q=${enc}`, opts),
       scrapeLabelSearch(`${BASE}/search/labels/?q=${enc}`, opts),
+      scrapeSearchLists(queryStr, opts),
+      scrapeSearchNews(queryStr, opts),
+      scrapeSearchTags(queryStr, opts),
+      scrapeUserSearch(`${BASE}/search/?q=${enc}`, opts),
     ]);
-    return { query: queryStr, albums, artists, labels };
+    return { query: queryStr, albums, artists, labels, lists, news, tags, users };
   }
 
   if (path === "/search/albums") {
     const queryStr = getRequiredParam(q, "q");
-    return { query: queryStr, albums: await fetchAlbumBlocks(`/search/albums/?q=${encodeURIComponent(queryStr)}`, opts) };
+    const page = getPage(q);
+    const p = page > 1 ? `&p=${page}` : "";
+    return { query: queryStr, page, albums: await fetchAlbumBlocks(`/search/albums/?q=${encodeURIComponent(queryStr)}${p}`, opts) };
   }
 
   if (path === "/search/artists") {
     const queryStr = getRequiredParam(q, "q");
-    return { query: queryStr, artists: await scrapeArtistSearch(`${BASE}/search/artists/?q=${encodeURIComponent(queryStr)}`, opts) };
+    const page = getPage(q);
+    const p = page > 1 ? `&p=${page}` : "";
+    return { query: queryStr, page, artists: await scrapeArtistSearch(`${BASE}/search/artists/?q=${encodeURIComponent(queryStr)}${p}`, opts) };
   }
 
   if (path === "/search/labels") {
     const queryStr = getRequiredParam(q, "q");
-    return { query: queryStr, labels: await scrapeLabelSearch(`${BASE}/search/labels/?q=${encodeURIComponent(queryStr)}`, opts) };
+    const page = getPage(q);
+    const p = page > 1 ? `&p=${page}` : "";
+    return { query: queryStr, page, labels: await scrapeLabelSearch(`${BASE}/search/labels/?q=${encodeURIComponent(queryStr)}${p}`, opts) };
+  }
+
+  if (path === "/search/lists") {
+    const queryStr = getRequiredParam(q, "q");
+    return scrapeSearchLists(queryStr, opts, getPage(q));
+  }
+
+  if (path === "/search/news") {
+    const queryStr = getRequiredParam(q, "q");
+    return scrapeSearchNews(queryStr, opts, getPage(q));
+  }
+
+  if (path === "/search/tags") {
+    const queryStr = getRequiredParam(q, "q");
+    return scrapeSearchTags(queryStr, opts, getPage(q));
+  }
+
+  if (path === "/search/users") {
+    const queryStr = getRequiredParam(q, "q");
+    const page = getPage(q);
+    const p = page > 1 ? `&p=${page}` : "";
+    return { query: queryStr, page, users: await scrapeUserSearch(`${BASE}/search/?q=${encodeURIComponent(queryStr)}${p}`, opts) };
+  }
+
+  if (path === "/search/autocomplete") {
+    const queryStr = getRequiredParam(q, "q");
+    return { query: queryStr, suggestions: await scrapeSearchAutocomplete(queryStr, opts) };
+  }
+
+  if (path === "/labels/autocomplete" || path === "/label/autocomplete") {
+    const queryStr = getRequiredParam(q, "q");
+    return { query: queryStr, suggestions: await scrapeLabelAutocomplete(queryStr, opts) };
+  }
+
+  if (path === "/artist") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const type = q.get("type");
+    const sort = q.get("sort");
+    const page = getPage(q);
+    const params = new URLSearchParams();
+    if (type) params.set("type", type);
+    if (sort) params.set("s", sort);
+    if (page > 1) params.set("p", String(page));
+    const suffix = params.toString() ? `?${params}` : "";
+    return scrapeArtistPage(`${BASE}/artist/${slug}/${suffix}`, opts);
+  }
+
+  if (path === "/artist/similar") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const page = getPage(q);
+    return { slug, page, artists: await scrapeSimilarArtists(slug, opts, page) };
+  }
+
+  if (path === "/artist/songs") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const page = getPage(q);
+    const aotyPath = page > 1 ? `${BASE}/artist/${slug}/best-songs/${page}/` : `${BASE}/artist/${slug}/best-songs/`;
+    return { slug, page, songs: await scrapeArtistTopSongs(aotyPath, opts) };
+  }
+
+  if (path === "/artist/news") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const type = q.get("type") ?? "newsworthy";
+    if (type !== "newsworthy" && type !== "new") throw new ApiError("Invalid type: must be newsworthy or new", 400);
+    return scrapeArtistNews(slug, opts, getPage(q), type);
+  }
+
+  if (path === "/artist/credits") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const role = q.get("role");
+    if (!role) return listArtistCreditRoles(slug, opts);
+    const sort = q.get("sort") ?? "";
+    try {
+      return await scrapeArtistCredits(slug, role, sort, opts);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("Unknown credit role")) throw new ApiError(err.message, 400);
+      throw err;
+    }
+  }
+
+  if (path === "/random/artist") {
+    return scrapeRandomArtist(opts);
+  }
+
+  if (path === "/random/album") {
+    return scrapeRandomAlbum(opts);
+  }
+
+  if (path === "/album/tags/autocomplete") {
+    const queryStr = getRequiredParam(q, "q");
+    return { query: queryStr, tags: await scrapeAlbumTagAutocomplete(queryStr, opts) };
+  }
+
+  if (path === "/label") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const page = getPage(q);
+    const aotyPath = page > 1 ? `${BASE}/label/${slug}/${page}/` : `${BASE}/label/${slug}/`;
+    return scrapeLabelPage(aotyPath, opts, page);
+  }
+
+  if (path === "/genres") {
+    return { genres: await scrapeGenresIndex(opts) };
+  }
+
+  if (path === "/subgenres") {
+    const genreId = getRequiredParam(q, "genreId");
+    return scrapeSubGenres(genreId, opts);
+  }
+
+  if (path === "/genre") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const period = (q.get("period") ?? "").trim();
+    const page = getPage(q);
+    const sort = q.get("sort");
+    const minReviews = q.get("minReviews");
+    const params = new URLSearchParams();
+    if (sort === "standard") params.set("sort", "standard");
+    if (minReviews) params.set("r", minReviews);
+    const qs = params.toString() ? `?${params}` : "";
+    let aotyPath: string;
+    if (!period) aotyPath = `/genre/${slug}/`;
+    else if (period === "recent") aotyPath = page > 1 ? `/genre/${slug}/recent/${page}/${qs}` : `/genre/${slug}/recent/${qs}`;
+    else aotyPath = page > 1 ? `/genre/${slug}/${period}/${page}/${qs}` : `/genre/${slug}/${period}/${qs}`;
+    return scrapeGenrePage(`${BASE}${aotyPath}`, slug, opts, page);
+  }
+
+  if (path === "/tag") {
+    const tag = getRequiredParam(q, "tag");
+    const type = q.get("type") ?? "albums";
+    const year = q.get("year");
+    if (type !== "albums" && type !== "media") throw new ApiError("Invalid type: must be albums or media", 400);
+    return { ...(await scrapeTagPage(tag, type, year, opts, getPage(q))), page: getPage(q) };
+  }
+
+  if (path === "/publication") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    return scrapePublicationPage(`${BASE}/publication/${slug}/`, slug, opts);
+  }
+
+  if (path === "/publication/reviews") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const page = getPage(q);
+    const aotyPath = page > 1 ? `${BASE}/publication/${slug}/reviews/${page}/` : `${BASE}/publication/${slug}/reviews/`;
+    return { slug, page, reviews: await scrapePublicationReviewsPage(aotyPath, opts) };
+  }
+
+  if (path === "/publication/lists") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const page = getPage(q);
+    return { slug, page, lists: await scrapePublicationListsPage(`${BASE}/publication/${slug}/lists/`, opts, page) };
+  }
+
+  if (path === "/publication/perfect") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    return scrapePublicationPerfect(slug, opts);
+  }
+
+  if (path === "/artists") {
+    return { sections: await scrapeArtistsOverview(opts) };
+  }
+
+  if (path === "/faq") {
+    return { items: await scrapeFaq(opts) };
+  }
+
+  if (path === "/changelog") {
+    return { entries: await scrapeChangelog(opts) };
+  }
+
+  if (path === "/critic") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const page = getPage(q);
+    const aotyPath = page > 1 ? `${BASE}/critic/${slug}/${page}/` : `${BASE}/critic/${slug}/`;
+    return scrapeCriticPage(aotyPath, slug, opts);
+  }
+
+  if (path === "/song") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    return scrapeSongPage(`${BASE}/song/${slug}/`, opts);
+  }
+
+  if (path === "/song/ratings") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    return scrapeSongRatingsPage(slug, getPage(q), opts);
+  }
+
+  if (path === "/songs/top") {
+    const period = q.get("period") ?? q.get("year") ?? String(new Date().getFullYear());
+    return scrapeTopSongs(period, getPage(q), opts);
+  }
+
+  if (path === "/user") {
+    return scrapeUserProfile(getRequiredParam(q, "username"), opts);
+  }
+
+  if (path === "/user/ratings") {
+    const username = getRequiredParam(q, "username");
+    return scrapeUserRatings(username, opts, {
+      page: getPage(q),
+      type: q.get("type"),
+      decade: q.get("decade"),
+      sort: q.get("sort"),
+    });
+  }
+
+  if (path === "/user/reviews") {
+    const username = getRequiredParam(q, "username");
+    return scrapeUserReviewsPage(username, getPage(q), "recent", opts);
+  }
+
+  if (path === "/user/listened") {
+    const username = getRequiredParam(q, "username");
+    return scrapeUserListened(username, getPage(q), opts);
+  }
+
+  if (path === "/user/library") {
+    const username = getRequiredParam(q, "username");
+    return scrapeUserLibrary(username, opts, { show: q.get("t"), sort: q.get("s"), page: getPage(q) });
+  }
+
+  if (path === "/user/liked-albums") {
+    const username = getRequiredParam(q, "username");
+    return scrapeUserLikedAlbums(username, getPage(q), opts);
+  }
+
+  if (path === "/user/tags") {
+    const username = getRequiredParam(q, "username");
+    const scope = q.get("scope") ?? "albums";
+    if (scope !== "albums" && scope !== "artists") throw new ApiError("Invalid scope: must be albums or artists", 400);
+    const sort = q.get("sort");
+    if (sort && sort !== "popularity" && sort !== "name") throw new ApiError("Invalid sort: must be popularity or name", 400);
+    return scrapeUserTags(username, scope, sort, opts);
+  }
+
+  if (path === "/user/tag") {
+    const username = getRequiredParam(q, "username");
+    const tag = getRequiredParam(q, "tag");
+    return scrapeUserTagDetail(username, tag, q.get("sort"), opts, getPage(q));
+  }
+
+  if (path === "/user/lists") {
+    return scrapeUserLists(getRequiredParam(q, "username"), opts, getPage(q));
+  }
+
+  if (path === "/user/list") {
+    const username = getRequiredParam(q, "username");
+    const slug = normSlug(getRequiredParam(q, "slug"), true);
+    return scrapeUserListDetail(username, slug, opts, { sort: q.get("sort"), page: getPage(q) });
+  }
+
+  if (path === "/user/followers") {
+    const username = getRequiredParam(q, "username");
+    return scrapeFollowList(username, "followers", getPage(q), opts);
+  }
+
+  if (path === "/user/following") {
+    const username = getRequiredParam(q, "username");
+    return scrapeFollowList(username, "following", getPage(q), opts);
+  }
+
+  if (path === "/user/review") {
+    const username = getRequiredParam(q, "username");
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    return scrapeUserReviewDetail(username, slug, opts);
+  }
+
+  if (path === "/user/genres") {
+    const username = getRequiredParam(q, "username");
+    return scrapeUserGenres(username, opts);
+  }
+
+  if (path === "/user/badges") {
+    const username = getRequiredParam(q, "username");
+    return scrapeUserBadges(username, opts);
+  }
+
+  if (path === "/users") {
+    return scrapeUsersCommunity(opts);
+  }
+
+  if (path === "/user-reviews") {
+    const period = q.get("period") ?? "all";
+    const valid: Record<string, string> = {
+      all: "/user-reviews/",
+      popular: "/user-reviews/popular/",
+      month: "/user-reviews/popular/this-month/",
+      year: "/user-reviews/popular/this-year/",
+    };
+    if (!(period in valid)) throw new ApiError("Invalid period: must be all, popular, month or year", 400);
+    const page = getPage(q);
+    if (page > 1 && period !== "all") throw new ApiError("Pagination is only available with period=all", 400);
+    const base = valid[period];
+    const url = page > 1 ? `${base}${page}/` : base;
+    const res = await fetch(`${BASE}${url}`, opts);
+    if (!res.ok) throw new Error(`User reviews fetch failed: ${res.status}`);
+    return { period, page, reviews: await scrapeUserReviewBlocks(res) };
+  }
+
+  if (path === "/ratings") {
+    const source = q.get("source") ?? "6-highest-rated";
+    const period = q.get("period") ?? String(new Date().getFullYear());
+    const page = getPage(q);
+    const sort = q.get("sort");
+    const minReviews = q.get("minReviews");
+    const genre = q.get("genre");
+    if (genre && source !== "user-highest-rated")
+      throw new ApiError("Genre filtering is only available with source=user-highest-rated", 400);
+    let aotyPath = `/ratings/${source}/${period}/${page}`;
+    if (genre) aotyPath = `/ratings/${source}/${period}/${genre}/${page}`;
+    const params = new URLSearchParams();
+    if (sort === "standard") params.set("sort", "standard");
+    if (minReviews) params.set("r", minReviews);
+    const qs = params.toString();
+    return { source, period, page, items: await scrapeRatingsChart(qs ? `${aotyPath}?${qs}` : aotyPath, opts) };
+  }
+
+  if (path === "/top-artists") {
+    const genre = q.get("genre");
+    const scope = q.get("scope") ?? "critics";
+    const page = getPage(q);
+    if (scope !== "critics" && scope !== "users") throw new ApiError("Invalid scope: must be critics or users", 400);
+    return { genre: genre ?? null, scope, page, artists: await scrapeTopArtists(genre, scope, opts, page) };
+  }
+
+  if (path === "/releases/this-week") {
+    const page = getPage(q);
+    return { page, albums: await fetchAlbumBlocks(page > 1 ? `/releases/this-week/${page}/` : "/releases/this-week/", opts) };
+  }
+
+  if (path === "/releases/by-date") {
+    const year = q.get("year") ?? String(new Date().getFullYear());
+    const month = q.get("month");
+    const week = q.get("week");
+    const decade = q.get("decade");
+    const genre = q.get("genre");
+    const page = getPage(q);
+    const pageSuffix = page > 1 ? `${page}/` : "";
+    let aotyPath: string;
+    if (week) aotyPath = `/week/${year}/${week}/releases/${pageSuffix}`;
+    else if (decade) aotyPath = `/decade/${decade}/releases/${pageSuffix}`;
+    else if (month) aotyPath = `/${year}/releases/${month}/${pageSuffix}`;
+    else aotyPath = `/${year}/releases/${pageSuffix}`;
+    if (genre) aotyPath += `?genre=${encodeURIComponent(genre)}`;
+    return { year, month: month ?? null, week: week ?? null, decade: decade ?? null, page, albums: await fetchAlbumBlocks(aotyPath, opts) };
+  }
+
+  if (path === "/releases/vibe") {
+    const vibe = normSlug(getRequiredParam(q, "vibe"));
+    const year = q.get("year");
+    const sort = q.get("sort");
+    const type = q.get("type");
+    const page = getPage(q);
+
+    if (sort && sort !== "release" && sort !== "critic" && sort !== "user" && sort !== "likes") {
+      throw new ApiError("Invalid sort: must be release, critic, user or likes", 400);
+    }
+
+    const yearPrefix = year ? `/${year}` : "/all";
+    const pageSuffix = page > 1 ? `${page}/` : "";
+    let aotyPath = `${yearPrefix}/releases/vibe/${vibe}/${pageSuffix}`;
+    const params = new URLSearchParams();
+    if (sort) params.set("sort", sort);
+    if (type) params.set("type", type);
+    const qs = params.toString();
+    if (qs) aotyPath += `?${qs}`;
+
+    return {
+      vibe,
+      year: year ?? "all",
+      sort: sort ?? "release",
+      type: type ?? null,
+      page,
+      albums: await fetchAlbumBlocks(aotyPath, opts),
+    };
+  }
+
+  if (path === "/recently-added") {
+    const page = getPage(q);
+    return { page, albums: await fetchAlbumBlocks(page > 1 ? `/recently-added/${page}/` : "/recently-added/", opts) };
+  }
+
+  if (path === "/on-this-day") {
+    return { albums: await fetchAlbumBlocks("/on-this-day/", opts) };
+  }
+
+  if (path === "/discover/top-rated") {
+    return { albums: await fetchAlbumBlocks("/discover/top-rated/", opts) };
+  }
+
+  if (path === "/discover/people") {
+    return { albums: await fetchAlbumBlocks("/discover/people/", opts) };
+  }
+
+  if (path === "/news-item") {
+    return scrapeNewsDetail(normSlug(getRequiredParam(q, "slug")), opts);
+  }
+
+  if (path === "/album/similar") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const page = getPage(q);
+    return scrapeAlbumSubAlbums(slug, "similar", opts, page);
+  }
+
+  if (path === "/album/user-reviews") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const sort = q.get("sort") ?? "popular";
+    if (sort !== "popular" && sort !== "recent" && sort !== "worst") throw new ApiError("Invalid sort: must be popular, recent or worst", 400);
+    return scrapeAlbumUserReviews(slug, sort, getPage(q), opts);
+  }
+
+  if (path === "/album/critic-lists") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    return scrapeAlbumCriticLists(slug, opts, getPage(q));
+  }
+
+  if (path === "/album/critic-reviews") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const sort = q.get("sort") ?? "highest";
+    if (sort !== "highest" && sort !== "lowest" && sort !== "newest" && sort !== "oldest")
+      throw new ApiError("Invalid sort: must be highest, lowest, newest or oldest", 400);
+    return scrapeAlbumCriticReviews(slug, sort, opts);
+  }
+
+  if (path === "/album/tags") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    return scrapeAlbumTags(slug, opts);
+  }
+
+  if (path === "/album/rating-history") {
+    const albumId = getRequiredParam(q, "albumId");
+    return scrapeAlbumRatingHistory(albumId);
+  }
+
+  if (path === "/album/distribution") {
+    const albumId = getRequiredParam(q, "albumId");
+    const format = q.get("format") ?? "all";
+    if (format !== "all" && format !== "following") {
+      throw new ApiError("Invalid format: must be all or following", 400);
+    }
+    return scrapeAlbumDistribution(albumId, format);
+  }
+
+  if (path === "/album/comments/replies") {
+    const albumId = getRequiredParam(q, "albumId");
+    const commentId = getRequiredParam(q, "commentId");
+    return scrapeAlbumCommentReplies(albumId, commentId, opts);
+  }
+
+  if (path === "/album/comments") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const page = getPage(q);
+    const aotyPath = page > 1 ? `/album/${slug}/comments/${page}/` : `/album/${slug}/comments/`;
+    return { slug, page, comments: await scrapeCommentsPage(aotyPath, opts) };
+  }
+
+  if (path === "/album/user-lists") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const page = getPage(q);
+    return { slug, page, lists: await scrapeAlbumUserLists(slug, opts, page) };
+  }
+
+  if (path === "/lists/users") {
+    const page = getPage(q);
+    return { page, lists: await scrapeUserListsIndex(opts, page) };
+  }
+
+  if (path === "/updates") {
+    return scrapeSiteUpdates(opts, q.get("filter"), getPage(q));
+  }
+
+  if (path === "/home") {
+    return scrapeHomepage(opts);
+  }
+
+  if (path === "/stats") {
+    return scrapeSiteStats(opts);
+  }
+
+  if (path === "/guidelines") {
+    const type = q.get("type") ?? "review";
+    if (type !== "review" && type !== "comment") {
+      throw new ApiError("Invalid type: must be review or comment", 400);
+    }
+    return scrapeGuidelines(type, opts);
   }
 
   throw new ApiError("Not found", 404);
+}
+
+function computeEtag(text: string): string {
+  let h = 0;
+  for (let i = 0; i < text.length; i++) {
+    h = (Math.imul(31, h) + text.charCodeAt(i)) | 0;
+  }
+  return `W/"${text.length.toString(16)}-${(h >>> 0).toString(16)}"`;
 }
 
 async function handle(url: URL, env: Env): Promise<Response> {
@@ -550,6 +1186,10 @@ if (path === "/rapidoc") return htmlPage(RAPIDOC_HTML);
     if (path === "/sitemap.xml") {
       return new Response(SITEMAP_XML, { headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=3600" } });
     }
+    if (path === "/feed/news.xml" || (path === "/feed/news" && q.get("format") === "xml")) {
+      const xml = await scrapeNewsFeedXml(FETCH_OPTS);
+      return new Response(xml, { headers: { "Content-Type": "application/xml; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=3600" } });
+    }
     if (path === "/ping") {
       return new Response(null, { status: 200, headers: { "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" } });
     }
@@ -570,15 +1210,21 @@ if (path === "/rapidoc") return htmlPage(RAPIDOC_HTML);
     }
 
     const skipCache = q.get("cache") === "false";
-    const fetchOpts = skipCache ? FETCH_OPTS_FRESH : FETCH_OPTS;
+    const noStore = path === "/random/artist";
+    const baseOpts = skipCache || noStore ? FETCH_OPTS_FRESH : FETCH_OPTS;
+    const fetchOpts: FetchOpts = {
+      ...baseOpts,
+      signal: AbortSignal.timeout(15_000),
+    };
     const cacheKey = buildCacheKey(url);
 
-    if (!skipCache) {
+    if (!skipCache && !noStore) {
       const cached = await env.aoty_cache.get(cacheKey);
       if (cached !== null) {
         const ttl = computeTtl(path, q, null);
         const cc = ttl ? `public, max-age=${ttl}` : "public";
-        return new Response(cached, { headers: { ...RES_HEADERS, "X-Cache": "HIT", "Cache-Control": cc, "Server-Timing": `kv;desc="HIT"`, "Link": `</openapi.json>; rel="service-desc"` } });
+        const etag = computeEtag(cached);
+        return new Response(cached, { headers: { ...RES_HEADERS, "X-Cache": "HIT", "Cache-Control": cc, "ETag": etag, "Server-Timing": `kv;desc="HIT"`, "Link": `</openapi.json>; rel="service-desc"` } });
       }
     }
 
@@ -588,11 +1234,15 @@ if (path === "/rapidoc") return htmlPage(RAPIDOC_HTML);
       const dur = Date.now() - t0;
       const body = JSON.stringify(data);
       const ttl = computeTtl(path, q, data);
-      await env.aoty_cache.put(cacheKey, body, ttl ? { expirationTtl: ttl } : undefined);
-      const cc = ttl ? `public, max-age=${ttl}` : "public";
-      return new Response(body, { headers: { ...RES_HEADERS, "X-Cache": "MISS", "Cache-Control": cc, "Server-Timing": `kv;desc="MISS",fetch;dur=${dur}`, "Link": `</openapi.json>; rel="service-desc"` } });
+      if (!noStore) {
+        await env.aoty_cache.put(cacheKey, body, ttl ? { expirationTtl: ttl } : undefined);
+      }
+      const cc = noStore ? "no-store" : ttl ? `public, max-age=${ttl}` : "public";
+      const etag = computeEtag(body);
+      return new Response(body, { headers: { ...RES_HEADERS, "X-Cache": "MISS", "Cache-Control": cc, "ETag": etag, "Server-Timing": `kv;desc="MISS",fetch;dur=${dur}`, "Link": `</openapi.json>; rel="service-desc"` } });
     } catch (err) {
       if (err instanceof ApiError) return problem(err.message, err.status);
+      if (err instanceof URIError) return problem(err.message, 400);
       return problem(err instanceof Error ? err.message : "Unknown error", 500);
     }
 }
@@ -604,7 +1254,27 @@ export default {
     if (method !== "GET" && method !== "HEAD") {
       return new Response(null, { status: 405, headers: { "Allow": "GET, HEAD, OPTIONS", "Access-Control-Allow-Origin": "*" } });
     }
-    const res = await handle(new URL(request.url), env);
+    let url: URL;
+    try {
+      url = new URL(request.url);
+    } catch {
+      return problem("Invalid request URL", 400);
+    }
+    const res = await handle(url, env);
+    const ifNoneMatch = request.headers.get("if-none-match");
+    if (ifNoneMatch && res.status === 200) {
+      const etag = res.headers.get("etag");
+      if (etag && etag === ifNoneMatch) {
+        return new Response(null, {
+          status: 304,
+          headers: {
+            "ETag": etag,
+            "Cache-Control": res.headers.get("cache-control") ?? "public",
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
+      }
+    }
     return method === "HEAD" ? new Response(null, { status: res.status, headers: res.headers }) : res;
   },
 };
