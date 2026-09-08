@@ -1,4 +1,4 @@
-import { BASE, REQ_HEADERS, decodeEntities } from "../constants.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, type FetchOpts } from "../constants.js";
 import type {
   AlbumStats,
   CreditEntry,
@@ -7,6 +7,9 @@ import type {
   AlbumRatingMilestone,
   AlbumDistribution,
   AlbumDistributionRow,
+  AlbumUserItem,
+  AlbumImagesResult,
+  AlbumImageItem,
 } from "../types.js";
 
 const EXTRAS_HEADERS: HeadersInit = {
@@ -237,3 +240,76 @@ export async function scrapeAlbumDistribution(albumId: string, format = "all"): 
     rows,
   };
 }
+
+export async function scrapeAlbumUsers(
+  type: "albumLikes" | "albumLibrary",
+  albumId: string,
+  start = 0,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<{ albumId: string; type: string; start: number; users: AlbumUserItem[] }> {
+  const res = await fetch(`${BASE}/scripts/showMore.php`, {
+    ...opts,
+    method: "POST",
+    headers: EXTRAS_HEADERS,
+    body: new URLSearchParams({ type, albumID: albumId, start: String(start) }).toString(),
+  });
+  if (!res.ok) throw new Error(`Album ${type} fetch failed: ${res.status}`);
+  const html = await res.text();
+  const users: AlbumUserItem[] = [];
+  for (const block of html.matchAll(/<div class="userBlock[^"]*">([\s\S]*?)(?=<div class="userBlock"|$)/g)) {
+    const b = block[1];
+    if (!b) continue;
+    const linkM = b.match(/<a [^>]*href="([^"]*\/user\/[^"]*)"/i);
+    const imgM = b.match(/<img [^>]*src="([^"]+)"/i);
+    const nameM = b.match(/<div class="userName">\s*<a [^>]*>([^<]+)<\/a>/i);
+    if (linkM?.[1] && nameM?.[1]) {
+      users.push({
+        username: decodeEntities(nameM[1].trim()),
+        url: linkM[1].startsWith("http") ? linkM[1] : BASE + linkM[1],
+        avatar: imgM?.[1] ?? null,
+      });
+    }
+  }
+  return { albumId, type, start, users };
+}
+
+export async function scrapeAlbumImages(
+  albumId: string,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<AlbumImagesResult> {
+  const res = await fetch(`${BASE}/scripts/showImage.php`, {
+    ...opts,
+    method: "POST",
+    headers: EXTRAS_HEADERS,
+    body: `id=${encodeURIComponent(albumId)}&type=album`,
+  });
+  if (!res.ok) throw new Error(`Album images fetch failed: ${res.status}`);
+  const html = await res.text();
+
+  const mainImageM = html.match(/<div id="curImage"><img [^>]*src="([^"]+)"/i);
+  const mainImage = mainImageM?.[1] ?? null;
+
+  const images: AlbumImageItem[] = [];
+  for (const m of html.matchAll(/<div id="img_(\d+)" class="thumbnail([^"]*)">[\s\S]*?<img [^>]*src="([^"]+)"[^>]*alt="([^"]*)"[^>]*title="([^"]*)"/g)) {
+    const id = m[1];
+    const classes = m[2];
+    const src = m[3];
+    const alt = m[4];
+    const title = m[5];
+    if (id && src) {
+      images.push({
+        id,
+        title: decodeEntities(title || alt || ""),
+        src,
+        isDefault: classes?.includes("selected") ?? false,
+      });
+    }
+  }
+
+  return {
+    albumId,
+    mainImage,
+    images,
+  };
+}
+

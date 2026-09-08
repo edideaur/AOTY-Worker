@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { scrapeSongPage, scrapeSongRatingsPage, scrapeTopSongs } from "../src/scrapers/song.js";
+import { scrapeSongPage, scrapeSongRatingsPage, scrapeTopSongs, scrapeBestSongsYearEnd } from "../src/scrapers/song.js";
 import { mockFetch } from "./test_utils.js";
 
 describe("song scrapers unit tests", () => {
@@ -27,6 +27,16 @@ describe("song scrapers unit tests", () => {
         </tr>
       </table>
       <div class="tag"><a href="/tag/masterpiece/">Masterpiece</a></div>
+      <div class="likeContainer"><strong>99%</strong> of users like this song</div>
+      <div class="dislikeContainer"><strong>1%</strong> of users don't like this song</div>
+      <table class="trackListTable">
+        <tr>
+          <td class="trackNumber">1</td>
+          <td><a href="/song/100-runaway/">Runaway</a></td>
+          <td class="length">9:08</td>
+          <td class="trackRating">96</td>
+        </tr>
+      </table>
       <div class="songRatings">
         <div class="cell profilePic"><a href="/user/zed/"><img src="https://cdn.aoty.org/zed.jpg" /></a></div>
         <div class="cell userName"><a href="/user/zed/" title="zed">zed</a><span class="gray-font">1 day ago</span></div>
@@ -59,6 +69,11 @@ describe("song scrapers unit tests", () => {
         { label: "90-99", count: 2300 },
       ]);
       expect(song.tags).toEqual([{ name: "Masterpiece", url: "https://www.albumoftheyear.org/tag/masterpiece/" }]);
+      expect(song.likePercentage).toBe("99%");
+      expect(song.dislikePercentage).toBe("1%");
+      expect(song.tracklist?.length).toBe(1);
+      expect(song.tracklist?.[0]?.title).toBe("Runaway");
+      expect(song.tracklist?.[0]?.score).toBe("96");
       expect(song.topRatings.length).toBe(1);
       expect(song.topRatings[0]?.username).toBe("zed");
       expect(song.topRatings[0]?.rating).toBe("100");
@@ -117,6 +132,38 @@ describe("song scrapers unit tests", () => {
       expect(res.songs[0]?.title).toBe("Runaway");
       expect(res.songs[0]?.artist).toBe("Kanye West");
       expect(res.songs[0]?.score).toBe("96");
+    } finally {
+      restore();
+    }
+  });
+
+  it("parses best songs year-end aggregate correctly", async () => {
+    const html = `
+      <div class="listSummaryRow">
+        <div class="listSummaryRank song">1</div>
+        <div class="listSummaryCover song"><a href="/song/880447-the-subway/"><img src="https://cdn.aoty.org/chappell.jpg" /></a></div>
+        <h2 class="artistTitle listSummary song"><a href="/artist/111702-chappell-roan/">Chappell Roan</a></h2>
+        <h3 class="albumTitle listSummary song"><a href="/song/880447-the-subway/">The Subway</a></h3>
+        <div class="pointsTable song">
+          <div class="summaryPointsMisc"><div class="head"># Lists</div><div class="count">12</div></div>
+          <div class="summaryPointsMisc"><div class="head">Points</div><div class="count">68</div></div>
+        </div>
+      </div>
+    `;
+
+    const restore = mockFetch(async () => new Response(html, { status: 200 }));
+    try {
+      const res = await scrapeBestSongsYearEnd(2025, "points");
+      expect(res.year).toBe(2025);
+      expect(res.sort).toBe("points");
+      expect(res.songs.length).toBe(1);
+      expect(res.songs[0]?.rank).toBe(1);
+      expect(res.songs[0]?.artist).toBe("Chappell Roan");
+      expect(res.songs[0]?.artists[0]?.name).toBe("Chappell Roan");
+      expect(res.songs[0]?.title).toBe("The Subway");
+      expect(res.songs[0]?.url).toContain("/song/880447-the-subway/");
+      expect(res.songs[0]?.points).toBe(68);
+      expect(res.songs[0]?.listsCount).toBe(12);
     } finally {
       restore();
     }

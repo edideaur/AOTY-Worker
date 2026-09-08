@@ -1,12 +1,12 @@
-import { BASE, FETCH_OPTS, FETCH_OPTS_FRESH, RES_HEADERS, PROBLEM_HEADERS, type FetchOpts } from "./constants.js";
+import { BASE, FETCH_OPTS, FETCH_OPTS_FRESH, RES_HEADERS, PROBLEM_HEADERS, cleanImageUrl, type FetchOpts } from "./constants.js";
 import { openApiSpec } from "./openapi.js";
 import { POSTMAN_BODY } from "./postman.js";
 import { scrapeAlbumBlocks } from "./scrapers/albumBlock.js";
 import { findAlbumUrl, scrapeAlbumCriticReviews, scrapeAlbumPage, scrapeAlbumTags, scrapeRandomAlbum, scrapeAlbumTagAutocomplete } from "./scrapers/album.js";
 import { scrapeNewsPage, scrapeNewsFeed, scrapeNewsFeedXml } from "./scrapers/news.js";
-import { scrapeListsIndex, scrapeListDetail } from "./scrapers/lists.js";
+import { scrapeListsIndex, scrapeListDetail, scrapeYearEndSummary, scrapeCommunityYearEnd } from "./scrapers/lists.js";
 import { scrapeArtistSearch, scrapeLabelAutocomplete, scrapeLabelSearch, scrapeSearchAutocomplete, scrapeUserSearch } from "./scrapers/search.js";
-import { scrapeAlbumStats, scrapeAlbumCredits, scrapeAlbumRatingHistory, scrapeAlbumDistribution } from "./scrapers/albumExtras.js";
+import { scrapeAlbumStats, scrapeAlbumCredits, scrapeAlbumRatingHistory, scrapeAlbumDistribution, scrapeAlbumUsers, scrapeAlbumImages } from "./scrapers/albumExtras.js";
 import { scrapeArtistPage, scrapeArtistTopSongs, scrapeSimilarArtists, scrapeArtistNews, scrapeArtistCredits, listArtistCreditRoles, scrapeRandomArtist } from "./scrapers/artist.js";
 import {
   scrapeArtistsOverview,
@@ -19,10 +19,11 @@ import {
   scrapePublicationPerfect,
   scrapePublicationReviewsPage,
   scrapeSubGenres,
+  scrapeGenreName,
   scrapeTagPage,
 } from "./scrapers/entities.js";
-import { scrapeSongPage, scrapeSongRatingsPage, scrapeTopSongs } from "./scrapers/song.js";
-import { scrapeRatingsChart, scrapeTopArtists } from "./scrapers/charts.js";
+import { scrapeSongPage, scrapeSongRatingsPage, scrapeTopSongs, scrapeBestSongsYearEnd } from "./scrapers/song.js";
+import { scrapeRatingsChart, scrapeTopArtists, scrapeRatingSources, scrapeRatingGenres } from "./scrapers/charts.js";
 import {
   scrapeAlbumCommentReplies,
   scrapeAlbumCriticLists,
@@ -38,6 +39,8 @@ import {
   scrapeSearchTags,
   scrapeSiteStats,
   scrapeSiteUpdates,
+  scrapeAllComments,
+  scrapeEntityCorrections,
 } from "./scrapers/social.js";
 import {
   scrapeAlbumUserReviews,
@@ -59,7 +62,12 @@ import {
   scrapeUserTagDetail,
   scrapeUserTags,
   scrapeUsersCommunity,
+  scrapeUserYearEnd,
+  scrapeUserDistribution,
+  scrapeUserArtistRatings,
+  scrapeUserAlbumTrackRatings,
 } from "./scrapers/user.js";
+import type { RandomAlbumFilter } from "./types.js";
 
 const OPENAPI_BODY = JSON.stringify(openApiSpec);
 
@@ -132,21 +140,23 @@ const TTL = {
 function computeTtl(path: string, q: URLSearchParams, data: unknown): number | undefined {
   // News + live listings refresh constantly
   if (path === "/news" || path === "/news-item" || path === "/feed/news" || path === "/feed/news.xml"
-    || path === "/releases" || path === "/releases/singles" || path === "/releases/this-week"
-    || path === "/releases/by-date" || path === "/releases/vibe" || path === "/recently-added" || path === "/on-this-day"
+    || path === "/releases" || path === "/releases/singles" || path === "/releases/this-week" || path === "/releases/this-week/singles"
+    || path === "/releases/by-date" || path === "/releases/month" || path === "/releases/week" || path === "/releases/vibe" || path === "/recently-added" || path === "/on-this-day"
     || path === "/discover" || path === "/discover/singles" || path === "/discover/people"
     || path === "/discover/anticipated" || path === "/discover/under-radar" || path === "/discover/top-rated"
     || path === "/updates" || path === "/users" || path === "/user-reviews" || path === "/home"
+    || path === "/comments" || path === "/comments/all"
   ) return TTL.HOUR;
 
   // Upcoming / search / current-year charts / user content: 24 h
   if (path === "/upcoming" || path.startsWith("/search") || path === "/ratings"
     || path === "/top-artists" || path === "/songs/top"
     || path === "/labels/autocomplete" || path === "/label/autocomplete"
-    || path === "/user/ratings" || path === "/user/reviews" || path === "/user/lists"
+    || path === "/user/ratings" || path === "/user/perfect" || path === "/user/reviews" || path === "/user/lists"
     || path === "/user/listened" || path === "/user/library" || path === "/user/liked-albums"
     || path === "/user/tags" || path === "/user/tag" || path === "/user/genres" || path === "/user/badges"
     || path.startsWith("/album/") || path === "/genre" || path === "/tag"
+    || path === "/releases/decade"
   ) return TTL.DAY;
 
   if (path === "/must-hear") {
@@ -180,12 +190,22 @@ function computeTtl(path: string, q: URLSearchParams, data: unknown): number | u
     || path === "/album/tags"
     || path === "/album/rating-history"
     || path === "/album/distribution"
+    || path === "/album/images"
+    || path === "/genre/name"
+    || path === "/ratings/sources"
+    || path === "/ratings/genres"
     || path === "/publication/perfect"
   ) return TTL.MONTH;
 
-  if (path === "/artist/credits" || path === "/artist/news") return TTL.DAY;
+  if (path === "/artist/credits" || path === "/artist/news" || path === "/album/likes" || path === "/album/in-library" || path === "/user/artist-ratings" || path === "/user/track-ratings" || path === "/album/corrections" || path === "/artist/corrections" || path === "/song/corrections") return TTL.DAY;
 
-  if (path === "/user/followers" || path === "/user/following") return TTL.DAY;
+  if (path === "/user/followers" || path === "/user/following" || path === "/user/distribution") return TTL.DAY;
+
+  if (path === "/list/summary" || path === "/year-end" || path === "/songs/best" || path === "/user/year-end") {
+    const year = q.get("year");
+    if (year && parseInt(year, 10) < new Date().getFullYear()) return TTL.MONTH;
+    return TTL.WEEK;
+  }
 
   if (path.startsWith("/list/")) return TTL.MONTH;
 
@@ -247,10 +267,10 @@ export function normSlug(raw: string, keepSlashes = false): string {
 }
 
 const PAGE_NAV = `<style>
-  .aoty-nav{display:flex;align-items:center;justify-content:space-between;padding:0 18px;height:50px;background:#0f0f0f;color:rgba(255,255,255,.9);font-family:Inter,sans-serif;font-weight:600;font-size:13px;position:sticky;top:0;z-index:1000;box-shadow:inset 0 -1px 0 #222;}
+  .aoty-nav{display:flex;align-items:center;justify-content:space-between;padding:0 18px;height:50px;background:#18191c;color:rgba(255,255,255,.9);font-family:'Open Sans','Roboto',system-ui,-apple-system,sans-serif;font-weight:600;font-size:13px;position:sticky;top:0;z-index:1000;box-shadow:inset 0 -1px 0 #2f3136;}
   .aoty-nav nav{display:flex;align-items:center;gap:18px;}
-  .aoty-nav a{display:flex;align-items:center;color:inherit;text-decoration:none;}
-  .aoty-nav a:hover{color:rgba(255,255,255,.5);}
+  .aoty-nav a{display:flex;align-items:center;color:#b9bbbe;text-decoration:none;transition:color .15s;}
+  .aoty-nav a:hover{color:#2ebd59;}
   .aoty-nav svg{width:18px;height:18px;fill:currentColor;display:block;}
 </style>
 <header class="aoty-nav">
@@ -274,32 +294,89 @@ const SCALAR_HTML = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
   <style>
-    body { background: #0f0f0f; }
-    :root { --scalar-custom-header-height: 50px; --scalar-background-1: #0f0f0f; --scalar-border-color: #0f0f0f; --scalar-color-1: rgba(255,255,255,0.9); --scalar-color-2: rgba(255,255,255,0.5); }
+    body {
+      background: #202225;
+      margin: 0;
+      color: #ffffff;
+      font-family: 'Open Sans', 'Roboto', system-ui, -apple-system, sans-serif;
+    }
+
+    /* AOTY Signature Theme for Scalar */
+    :root,
+    .light-mode,
+    .dark-mode {
+      --scalar-custom-header-height: 50px;
+      --scalar-font: 'Open Sans', 'Roboto', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+      /* AOTY Dark Background Palette */
+      --scalar-background-1: #202225;
+      --scalar-background-2: #2f3136;
+      --scalar-background-3: #36393f;
+      --scalar-background-accent: rgba(46, 189, 89, 0.12);
+
+      /* AOTY Typography & Muted Grays */
+      --scalar-color-1: #ffffff;
+      --scalar-color-2: #b9bbbe;
+      --scalar-color-3: #72767d;
+      --scalar-color-accent: #2ebd59;
+
+      /* Borders */
+      --scalar-border-color: #2f3136;
+
+      /* Buttons & Highlights */
+      --scalar-button-1: #2ebd59;
+      --scalar-button-1-hover: #269e4a;
+      --scalar-button-1-color: #ffffff;
+
+      /* HTTP Verb Styling (AOTY Green/Blue/Yellow/Red) */
+      --scalar-color-get: #2ebd59;
+      --scalar-background-get: rgba(46, 189, 89, 0.14);
+      --scalar-color-post: #4a70a9;
+      --scalar-background-post: rgba(74, 112, 169, 0.14);
+      --scalar-color-put: #e9bc1d;
+      --scalar-background-put: rgba(233, 188, 29, 0.14);
+      --scalar-color-delete: #d76666;
+      --scalar-background-delete: rgba(215, 102, 102, 0.14);
+
+      /* Sidebar & Search Navigation */
+      --scalar-sidebar-background-1: #18191c;
+      --scalar-sidebar-item-hover-background: #2f3136;
+      --scalar-sidebar-item-active-background: rgba(46, 189, 89, 0.16);
+      --scalar-sidebar-color-1: #ffffff;
+      --scalar-sidebar-color-2: #b9bbbe;
+      --scalar-sidebar-border-color: #26282c;
+      --scalar-sidebar-search-background: #202225;
+      --scalar-sidebar-search-border-color: #2f3136;
+    }
+
     .custom-header {
       height: var(--scalar-custom-header-height);
-      background-color: var(--scalar-background-1);
-      box-shadow: inset 0 -1px 0 var(--scalar-border-color);
-      color: var(--scalar-color-1);
-      font-size: var(--scalar-font-size-2);
+      background-color: #18191c;
+      box-shadow: inset 0 -1px 0 #2f3136;
+      color: #ffffff;
+      font-size: 13px;
       padding: 0 18px;
       position: sticky;
+      display: flex;
+      align-items: center;
       justify-content: space-between;
       top: 0;
       z-index: 100;
+      font-family: 'Open Sans', 'Roboto', sans-serif;
     }
-    .custom-header, .custom-header nav { display: flex; align-items: center; gap: 18px; }
-    .custom-header nav a { display: flex; align-items: center; color: inherit; }
-    .custom-header nav a:hover { color: var(--scalar-color-2); }
+    .custom-header nav { display: flex; align-items: center; gap: 18px; }
+    .custom-header nav a { display: flex; align-items: center; color: #b9bbbe; text-decoration: none; transition: color 0.15s; }
+    .custom-header nav a:hover { color: #2ebd59; }
     .custom-header nav a svg { width: 18px; height: 18px; fill: currentColor; display: block; }
-    .custom-header .site-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: var(--scalar-font-size-2); }
+    .custom-header .site-title { font-weight: 700; font-size: 14px; letter-spacing: 0.5px; color: #ffffff; display: flex; align-items: center; gap: 6px; }
+    .custom-header .site-title span.badge { background: #2ebd59; color: #000000; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 4px; }
   </style>
 </head>
 <body>
   <header class="custom-header scalar-app">
-    <span class="site-title">AOTY API</span>
+    <span class="site-title">AOTY API <span class="badge">100</span></span>
     <nav>
       <a href="https://discord.gg/UdCUsd2X" title="Discord" aria-label="Discord">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 127.14 96.36"><path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z"/></svg>
@@ -310,12 +387,10 @@ const SCALAR_HTML = `<!DOCTYPE html>
       <a href="https://instagram.com/edideaur" title="Instagram" aria-label="Instagram">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838a6.162 6.162 0 1 0 0 12.324 6.162 6.162 0 0 0 0-12.324zm0 10.162a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.406-11.845a1.44 1.44 0 1 0 0 2.881 1.44 1.44 0 0 0 0-2.881z"/></svg>
       </a>
-      <a href="https://ko-fi.com/edideaur" title="Ko-fi" aria-label="Ko-fi">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M11.351 2.715c-2.7 0-4.986.025-6.83.26C2.078 3.285 0 5.154 0 8.61c0 3.506.182 6.13 1.585 8.493 1.584 2.701 4.233 4.182 7.662 4.182h.83c4.209 0 6.494-2.234 7.637-4a9.5 9.5 0 0 0 1.091-2.338C21.792 14.688 24 12.22 24 9.208v-.415c0-3.247-2.13-5.507-5.792-5.87-1.558-.156-2.65-.208-6.857-.208m0 1.947c4.208 0 5.09.052 6.571.182 2.624.311 4.13 1.584 4.13 4v.39c0 2.156-1.792 3.844-3.87 3.844h-.935l-.156.649c-.208 1.013-.597 1.818-1.039 2.546-.909 1.428-2.545 3.064-5.922 3.064h-.805c-2.571 0-4.831-.883-6.078-3.195-1.09-2-1.298-4.155-1.298-7.506 0-2.181.857-3.402 3.012-3.714 1.533-.233 3.559-.26 6.39-.26m6.547 2.287c-.416 0-.65.234-.65.546v2.935c0 .311.234.545.65.545 1.324 0 2.051-.754 2.051-2s-.727-2.026-2.052-2.026m-10.39.182c-1.818 0-3.013 1.48-3.013 3.142 0 1.533.858 2.857 1.949 3.897.727.701 1.87 1.429 2.649 1.896a1.47 1.47 0 0 0 1.507 0c.78-.467 1.922-1.195 2.623-1.896 1.117-1.039 1.974-2.364 1.974-3.897 0-1.662-1.247-3.142-3.039-3.142-1.065 0-1.792.545-2.338 1.298-.493-.753-1.246-1.298-2.312-1.298"/></svg>
-      </a>
+      <a href="https://ko-fi.com/edideaur" title="Ko-fi" aria-label="Ko-fi"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M11.351 2.715c-2.7 0-4.986.025-6.83.26C2.078 3.285 0 5.154 0 8.61c0 3.506.182 6.13 1.585 8.493 1.584 2.701 4.233 4.182 7.662 4.182h.83c4.209 0 6.494-2.234 7.637-4a9.5 9.5 0 0 0 1.091-2.338C21.792 14.688 24 12.22 24 9.208v-.415c0-3.247-2.13-5.507-5.792-5.87-1.558-.156-2.65-.208-6.857-.208m0 1.947c4.208 0 5.09.052 6.571.182 2.624.311 4.13 1.584 4.13 4v.39c0 2.156-1.792 3.844-3.87 3.844h-.935l-.156.649c-.208 1.013-.597 1.818-1.039 2.546-.909 1.428-2.545 3.064-5.922 3.064h-.805c-2.571 0-4.831-.883-6.078-3.195-1.09-2-1.298-4.155-1.298-7.506 0-2.181.857-3.402 3.012-3.714 1.533-.233 3.559-.26 6.39-.26m6.547 2.287c-.416 0-.65.234-.65.546v2.935c0 .311.234.545.65.545 1.324 0 2.051-.754 2.051-2s-.727-2.026-2.052-2.026m-10.39.182c-1.818 0-3.013 1.48-3.013 3.142 0 1.533.858 2.857 1.949 3.897.727.701 1.87 1.429 2.649 1.896a1.47 1.47 0 0 0 1.507 0c.78-.467 1.922-1.195 2.623-1.896 1.117-1.039 1.974-2.364 1.974-3.897 0-1.662-1.247-3.142-3.039-3.142-1.065 0-1.792.545-2.338 1.298-.493-.753-1.246-1.298-2.312-1.298"/></svg></a>
     </nav>
   </header>
-  <script id="api-reference" data-url="/openapi.json"></script>
+  <script id="api-reference" data-url="/openapi.json" data-configuration='{"theme":"none","darkMode":true,"hideModels":false}'></script>
   <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
 </body>
 </html>`;
@@ -606,6 +681,21 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return { year: year ? parseInt(year, 10) : null, sort: sort ?? null, page, lists: await scrapeListsIndex(aotyUrl, opts) };
   }
 
+  if (path === "/list/summary") {
+    const rawYear = q.get("year") ?? String(new Date().getFullYear() - 1);
+    if (!/^\d{4}$/.test(rawYear.trim())) throw new ApiError("Invalid year format", 400);
+    const year = parseInt(rawYear.trim(), 10);
+    const genre = q.get("genre");
+    return scrapeYearEndSummary(year, genre, opts);
+  }
+
+  if (path === "/year-end") {
+    const rawYear = q.get("year") ?? String(new Date().getFullYear() - 1);
+    if (!/^\d{4}$/.test(rawYear.trim())) throw new ApiError("Invalid year format", 400);
+    const year = parseInt(rawYear.trim(), 10);
+    return scrapeCommunityYearEnd(year, opts);
+  }
+
   const listMatch = path.match(/^\/list\/(.+)$/);
   if (listMatch?.[1]) {
     const slug = normSlug(listMatch[1]);
@@ -726,12 +816,32 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     }
   }
 
+  if (path === "/artist/corrections") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    return scrapeEntityCorrections("artist", slug, opts);
+  }
+
   if (path === "/random/artist") {
     return scrapeRandomArtist(opts);
   }
 
   if (path === "/random/album") {
-    return scrapeRandomAlbum(opts);
+    const filter: RandomAlbumFilter = {
+      type: q.get("type") ?? undefined,
+      yearFrom: q.get("yearFrom") ?? undefined,
+      yearTo: q.get("yearTo") ?? undefined,
+      genre: q.get("genre") ?? undefined,
+      genreSecondary: q.get("genreSecondary") ?? undefined,
+      criticScoreMin: q.get("criticScoreMin") ?? undefined,
+      criticScoreMax: q.get("criticScoreMax") ?? undefined,
+      userScoreMin: q.get("userScoreMin") ?? undefined,
+      userScoreMax: q.get("userScoreMax") ?? undefined,
+      criticReviewsMin: q.get("criticReviewsMin") ?? undefined,
+      criticReviewsMax: q.get("criticReviewsMax") ?? undefined,
+      userReviewsMin: q.get("userReviewsMin") ?? undefined,
+      userReviewsMax: q.get("userReviewsMax") ?? undefined,
+    };
+    return scrapeRandomAlbum(opts, filter);
   }
 
   if (path === "/album/tags/autocomplete") {
@@ -753,6 +863,11 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
   if (path === "/subgenres") {
     const genreId = getRequiredParam(q, "genreId");
     return scrapeSubGenres(genreId, opts);
+  }
+
+  if (path === "/genre/name") {
+    const genreId = getRequiredParam(q, "id");
+    return scrapeGenreName(genreId, opts);
   }
 
   if (path === "/genre") {
@@ -815,7 +930,7 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return { entries: await scrapeChangelog(opts) };
   }
 
-  if (path === "/critic") {
+  if (path === "/critic" || path === "/critic/reviews") {
     const slug = normSlug(getRequiredParam(q, "slug"));
     const page = getPage(q);
     const aotyPath = page > 1 ? `${BASE}/critic/${slug}/${page}/` : `${BASE}/critic/${slug}/`;
@@ -832,9 +947,24 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeSongRatingsPage(slug, getPage(q), opts);
   }
 
+  if (path === "/song/corrections") {
+    const id = q.get("songId") ?? q.get("slug");
+    if (!id) throw new ApiError("Missing required parameter: songId or slug", 400);
+    return scrapeEntityCorrections("song", id, opts);
+  }
+
   if (path === "/songs/top") {
     const period = q.get("period") ?? q.get("year") ?? String(new Date().getFullYear());
     return scrapeTopSongs(period, getPage(q), opts);
+  }
+
+  if (path === "/songs/best") {
+    const rawYear = q.get("year") ?? String(new Date().getFullYear() - 1);
+    if (!/^\d{4}$/.test(rawYear.trim())) throw new ApiError("Invalid year format", 400);
+    const year = parseInt(rawYear.trim(), 10);
+    const sort = q.get("sort") ?? "points";
+    if (sort !== "points" && sort !== "lists") throw new ApiError("Invalid sort: must be points or lists", 400);
+    return scrapeBestSongsYearEnd(year, sort, opts);
   }
 
   if (path === "/user") {
@@ -848,6 +978,16 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
       type: q.get("type"),
       decade: q.get("decade"),
       sort: q.get("sort"),
+      year: q.get("year") ?? q.get("y"),
+      genreId: q.get("genre") ?? q.get("genreId") ?? q.get("genreID"),
+    });
+  }
+
+  if (path === "/user/perfect") {
+    const username = getRequiredParam(q, "username");
+    return scrapeUserRatings(username, opts, {
+      page: getPage(q),
+      sort: "perfect",
     });
   }
 
@@ -922,6 +1062,35 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeUserBadges(username, opts);
   }
 
+  if (path === "/user/year-end") {
+    const username = getRequiredParam(q, "username");
+    const rawYear = getRequiredParam(q, "year");
+    if (!/^\d{4}$/.test(rawYear.trim())) throw new ApiError("Invalid year format", 400);
+    const year = parseInt(rawYear.trim(), 10);
+    return scrapeUserYearEnd(username, year, opts);
+  }
+
+  if (path === "/user/distribution") {
+    const username = getRequiredParam(q, "username");
+    const format = q.get("format") ?? "albums";
+    const validFormats = ["albums", "singles", "videos", "tracks"];
+    if (!validFormats.includes(format)) throw new ApiError("Invalid format: must be albums, singles, videos or tracks", 400);
+    return scrapeUserDistribution(username, format, opts);
+  }
+
+  if (path === "/user/artist-ratings") {
+    const username = getRequiredParam(q, "username");
+    const artistId = getRequiredParam(q, "artistId");
+    return scrapeUserArtistRatings(username, artistId, opts);
+  }
+
+  if (path === "/user/track-ratings") {
+    const username = getRequiredParam(q, "username");
+    const albumIdOrSlug = q.get("albumId") ?? q.get("slug");
+    if (!albumIdOrSlug) throw new ApiError("Missing required parameter: albumId or slug", 400);
+    return scrapeUserAlbumTrackRatings(username, albumIdOrSlug, opts);
+  }
+
   if (path === "/users") {
     return scrapeUsersCommunity(opts);
   }
@@ -942,6 +1111,17 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     const res = await fetch(`${BASE}${url}`, opts);
     if (!res.ok) throw new Error(`User reviews fetch failed: ${res.status}`);
     return { period, page, reviews: await scrapeUserReviewBlocks(res) };
+  }
+
+  if (path === "/ratings/sources") {
+    const year = q.get("year") ?? String(new Date().getFullYear());
+    return scrapeRatingSources(year, opts);
+  }
+
+  if (path === "/ratings/genres") {
+    const year = q.get("year") ?? String(new Date().getFullYear());
+    const type = q.get("type") ?? "criticHighestRated";
+    return scrapeRatingGenres(year, type, opts);
   }
 
   if (path === "/ratings") {
@@ -970,9 +1150,46 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return { genre: genre ?? null, scope, page, artists: await scrapeTopArtists(genre, scope, opts, page) };
   }
 
+  if (path === "/releases/this-week/singles") {
+    const page = getPage(q);
+    return { page, albums: await fetchAlbumBlocks(page > 1 ? `/releases/this-week/singles/${page}/` : "/releases/this-week/singles/", opts) };
+  }
+
   if (path === "/releases/this-week") {
     const page = getPage(q);
     return { page, albums: await fetchAlbumBlocks(page > 1 ? `/releases/this-week/${page}/` : "/releases/this-week/", opts) };
+  }
+
+  if (path === "/releases/decade") {
+    const decade = getRequiredParam(q, "decade");
+    const genre = q.get("genre");
+    const page = getPage(q);
+    const pageSuffix = page > 1 ? `${page}/` : "";
+    let aotyPath = `/decade/${decade}/releases/${pageSuffix}`;
+    if (genre) aotyPath += `?genre=${encodeURIComponent(genre)}`;
+    return { decade, page, albums: await fetchAlbumBlocks(aotyPath, opts) };
+  }
+
+  if (path === "/releases/month") {
+    const year = q.get("year") ?? String(new Date().getFullYear());
+    const month = getRequiredParam(q, "month");
+    const genre = q.get("genre");
+    const page = getPage(q);
+    const pageSuffix = page > 1 ? `${page}/` : "";
+    let aotyPath = `/${year}/releases/${month}/${pageSuffix}`;
+    if (genre) aotyPath += `?genre=${encodeURIComponent(genre)}`;
+    return { year, month, page, albums: await fetchAlbumBlocks(aotyPath, opts) };
+  }
+
+  if (path === "/releases/week") {
+    const year = q.get("year") ?? String(new Date().getFullYear());
+    const week = getRequiredParam(q, "week");
+    const genre = q.get("genre");
+    const page = getPage(q);
+    const pageSuffix = page > 1 ? `${page}/` : "";
+    let aotyPath = `/week/${year}/${week}/releases/${pageSuffix}`;
+    if (genre) aotyPath += `?genre=${encodeURIComponent(genre)}`;
+    return { year, week, page, albums: await fetchAlbumBlocks(aotyPath, opts) };
   }
 
   if (path === "/releases/by-date") {
@@ -1053,7 +1270,9 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     const slug = normSlug(getRequiredParam(q, "slug"));
     const sort = q.get("sort") ?? "popular";
     if (sort !== "popular" && sort !== "recent" && sort !== "worst") throw new ApiError("Invalid sort: must be popular, recent or worst", 400);
-    return scrapeAlbumUserReviews(slug, sort, getPage(q), opts);
+    const type = q.get("type") ?? "reviews";
+    if (type !== "reviews" && type !== "ratings") throw new ApiError("Invalid type: must be reviews or ratings", 400);
+    return scrapeAlbumUserReviews(slug, sort, getPage(q), opts, type);
   }
 
   if (path === "/album/critic-lists") {
@@ -1088,6 +1307,35 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeAlbumDistribution(albumId, format);
   }
 
+  if (path === "/album/likes") {
+    const slug = q.get("slug");
+    const albumId = q.get("albumId") ?? (slug ? slug.match(/^(\d+)/)?.[1] : null);
+    if (!albumId) throw new ApiError("Missing required parameter: albumId or slug with ID", 400);
+    const start = parseInt(q.get("start") ?? "0", 10) || 0;
+    return scrapeAlbumUsers("albumLikes", albumId, start, opts);
+  }
+
+  if (path === "/album/in-library" || path === "/album/library") {
+    const slug = q.get("slug");
+    const albumId = q.get("albumId") ?? (slug ? slug.match(/^(\d+)/)?.[1] : null);
+    if (!albumId) throw new ApiError("Missing required parameter: albumId or slug with ID", 400);
+    const start = parseInt(q.get("start") ?? "0", 10) || 0;
+    return scrapeAlbumUsers("albumLibrary", albumId, start, opts);
+  }
+
+  if (path === "/album/images") {
+    const slug = q.get("slug");
+    const albumId = q.get("albumId") ?? (slug ? slug.match(/^(\d+)/)?.[1] : null);
+    if (!albumId) throw new ApiError("Missing required parameter: albumId or slug with ID", 400);
+    return scrapeAlbumImages(albumId, opts);
+  }
+
+  if (path === "/album/corrections") {
+    const id = q.get("albumId") ?? q.get("slug");
+    if (!id) throw new ApiError("Missing required parameter: albumId or slug with ID", 400);
+    return scrapeEntityCorrections("album", id, opts);
+  }
+
   if (path === "/album/comments/replies") {
     const albumId = getRequiredParam(q, "albumId");
     const commentId = getRequiredParam(q, "commentId");
@@ -1099,6 +1347,13 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     const page = getPage(q);
     const aotyPath = page > 1 ? `/album/${slug}/comments/${page}/` : `/album/${slug}/comments/`;
     return { slug, page, comments: await scrapeCommentsPage(aotyPath, opts) };
+  }
+
+  if (path === "/comments" || path === "/comments/all") {
+    const type = getRequiredParam(q, "type");
+    const itemId = getRequiredParam(q, "itemId");
+    const albumId = q.get("albumId");
+    return scrapeAllComments(type, itemId, albumId, opts);
   }
 
   if (path === "/album/user-lists") {
@@ -1141,6 +1396,26 @@ function computeEtag(text: string): string {
     h = (Math.imul(31, h) + text.charCodeAt(i)) | 0;
   }
   return `W/"${text.length.toString(16)}-${(h >>> 0).toString(16)}"`;
+}
+
+export function sanitizeImageUrls<T>(val: T): T {
+  if (typeof val === "string") {
+    if (val.includes("albumoftheyear.org") && (/\/\d+x\d+\//.test(val) || val.includes("/cdn-cgi/image/"))) {
+      return cleanImageUrl(val) as unknown as T;
+    }
+    return val;
+  }
+  if (Array.isArray(val)) {
+    return val.map(sanitizeImageUrls) as unknown as T;
+  }
+  if (val !== null && typeof val === "object") {
+    const res: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(val)) {
+      res[k] = sanitizeImageUrls(v);
+    }
+    return res as unknown as T;
+  }
+  return val;
 }
 
 async function handle(url: URL, env: Env): Promise<Response> {
@@ -1210,7 +1485,7 @@ if (path === "/rapidoc") return htmlPage(RAPIDOC_HTML);
     }
 
     const skipCache = q.get("cache") === "false";
-    const noStore = path === "/random/artist";
+    const noStore = path === "/random/artist" || path === "/random/album";
     const baseOpts = skipCache || noStore ? FETCH_OPTS_FRESH : FETCH_OPTS;
     const fetchOpts: FetchOpts = {
       ...baseOpts,
@@ -1230,7 +1505,8 @@ if (path === "/rapidoc") return htmlPage(RAPIDOC_HTML);
 
     try {
       const t0 = Date.now();
-      const data = await route(path, q, fetchOpts);
+      const rawData = await route(path, q, fetchOpts);
+      const data = sanitizeImageUrls(rawData);
       const dur = Date.now() - t0;
       const body = JSON.stringify(data);
       const ttl = computeTtl(path, q, data);

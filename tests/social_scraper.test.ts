@@ -15,6 +15,8 @@ import {
   scrapeAlbumUserLists,
   scrapeHomepage,
   scrapeGuidelines,
+  scrapeAllComments,
+  scrapeEntityCorrections,
 } from "../src/scrapers/social.js";
 
 describe("social scrapers unit tests", () => {
@@ -411,6 +413,74 @@ describe("social scrapers unit tests", () => {
         return new Response("Error", { status: 500 });
       };
       expect(scrapeNewsDetail("1-news")).rejects.toThrow("News item fetch failed");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("parses scrapeAllComments correctly", async () => {
+    const html = `
+      <div id="reply1" class="commentRow">
+        <div class="commentUserName"><a href="/user/u/">User</a></div>
+        <div class="commentText">A great review!</div>
+      </div>
+    `;
+    let calledBody = "";
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (_input, init) => {
+        calledBody = String(init?.body ?? "");
+        return new Response(html, { status: 200 });
+      };
+      const res = await scrapeAllComments("user_review", "100", "500");
+      expect(res.type).toBe("user_review");
+      expect(res.itemId).toBe("100");
+      expect(res.albumId).toBe("500");
+      expect(calledBody).toContain("type=user_review");
+      expect(calledBody).toContain("itemID=100");
+      expect(calledBody).toContain("albumID=500");
+      expect(res.comments.length).toBe(1);
+      expect(res.comments[0]?.username).toBe("User");
+      expect(res.comments[0]?.text).toBe("A great review!");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("parses scrapeEntityCorrections correctly for album", async () => {
+    const html = `
+      <h1 class="albumTitle"><a href="/album/564912-asap-rocky-dont-be-dumb.php">Don't Be Dumb</a></h1>
+      <div>Added on <strong>October 30, 2022</strong> by <strong><a href="/user/someguy/">SomeGuy</a></strong></div>
+      <div><strong>Source: </strong><a href="https://spotify.com/album/1">https://spotify.com/album/1</a></div>
+      <div class="notice">Locked for moderators only</div>
+      <div class="logRow"><strong><a href="/user/mod/">Mod</a></strong> <i title="Moderator" class="fa-solid fa-crown"></i> marked a correction as <strong>Fixed</strong>. <span class="gray-font">6mo</span></div>
+      <div class="correction" id="correction123">
+        <div class="correctionTitle">Fix tracklist</div>
+        <span class="status">Fixed</span>
+        by <a href="/user/submitter/">Submitter</a>
+        <span class="gray-font">7mo</span>
+      </div>
+    `;
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response(html, { status: 200 });
+      const res = await scrapeEntityCorrections("album", "564912");
+      expect(res.id).toBe("564912");
+      expect(res.title).toBe("Don't Be Dumb");
+      expect(res.addedOn).toBe("October 30, 2022");
+      expect(res.addedBy).toBe("SomeGuy");
+      expect(res.addedByUrl).toContain("/user/someguy/");
+      expect(res.sourceUrl).toBe("https://spotify.com/album/1");
+      expect(res.locked).toBe(true);
+      expect(res.changeLog.length).toBe(1);
+      expect(res.changeLog[0]?.user).toBe("Mod");
+      expect(res.changeLog[0]?.role).toBe("Moderator");
+      expect(res.changeLog[0]?.date).toBe("6mo");
+      expect(res.corrections.length).toBe(1);
+      expect(res.corrections[0]?.id).toBe("123");
+      expect(res.corrections[0]?.title).toBe("Fix tracklist");
+      expect(res.corrections[0]?.status).toBe("Fixed");
+      expect(res.corrections[0]?.submittedBy).toBe("Submitter");
     } finally {
       globalThis.fetch = originalFetch;
     }

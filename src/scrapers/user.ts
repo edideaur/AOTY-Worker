@@ -2,9 +2,14 @@ import { BASE, FETCH_OPTS, decodeEntities, type FetchOpts } from "../constants.j
 import { scrapeAlbumBlocks } from "./albumBlock.js";
 import { scrapeCommentRows } from "./commentRow.js";
 import { scrapeUserListRows } from "./userListRow.js";
+import { parseAlbumUserReviewRows } from "./album.js";
 import type {
   AlbumBlock,
+  AlbumDistributionRow,
+  AlbumUserReviewsResult,
+  StreamingLink,
   UserBadgeItem,
+  UserDistributionResult,
   UserGenreItem,
   UserListDetail,
   UserListDetailItem,
@@ -14,6 +19,12 @@ import type {
   UserReview,
   UserReviewDetail,
   UserTagEntry,
+  UserYearEndAlbum,
+  UserYearEndResult,
+  UserArtistRatingItem,
+  UserArtistRatingsResult,
+  UserAlbumTrackRatingsResult,
+  UserTrackRatingEntry,
 } from "../types.js";
 
 export async function scrapeUserProfile(username: string, opts: FetchOpts = FETCH_OPTS): Promise<UserProfile> {
@@ -30,7 +41,30 @@ export async function scrapeUserProfile(username: string, opts: FetchOpts = FETC
     }
   }
   const avatarM = html.match(/<img src="([^"]+)"[^>]*alt="[^"]*"[^>]*>/) ?? html.match(/<div class="profileImage">[\s\S]{0,300}?<img src="([^"]+)"/);
+  const spanM = html.match(/<h1 class="headline profile">\s*<span[^>]*>([^<]*)<\/span>/i);
+  const handleM = html.match(/<h1 class="headline profile">[\s\S]*?<div[^>]*>\(([^)]+)\)<\/div>/i);
   const nameM = html.match(/<h1 class="headline profile"><span>([^<]*)<\/span><\/h1>/) ?? html.match(/<h1[^>]*>([^<]*)<\/h1>/);
+  const actualUsername = handleM?.[1]?.trim() || nameM?.[1]?.trim() || username;
+  const displayName = spanM?.[1] ? decodeEntities(spanM[1].trim()) : decodeEntities(actualUsername);
+
+  const userIdM = html.match(/data-(?:user-id|item-id)="(\d+)"/);
+  const userId = userIdM?.[1] ?? null;
+
+  const memberM = html.match(/Member since\s+([^<]+)/i);
+  const memberSince = memberM?.[1] ? decodeEntities(memberM[1].trim()) : null;
+
+  const yelMatches = [...html.matchAll(/\/year-end\/[^/]+\/(\d{4})\//g)];
+  const yearEndLists = [...new Set(yelMatches.map((m) => (m[1] ? parseInt(m[1], 10) : 0)).filter((y) => y > 0))].sort((a, b) => b - a);
+
+  let pinnedReview: UserReview | null = null;
+  const pinnedIdx = html.indexOf("Pinned Review");
+  if (pinnedIdx !== -1) {
+    const endPinned = html.indexOf("<h2 class=\"sectionHeading\">", pinnedIdx + 20);
+    const chunk = html.slice(pinnedIdx, endPinned !== -1 ? endPinned : pinnedIdx + 3000);
+    const parsed = parseAlbumUserReviewRows(chunk);
+    if (parsed.length > 0) pinnedReview = parsed[0] ?? null;
+  }
+
   const bioM = html.match(/<div class="aboutUser">([\s\S]*?)<\/div>/);
   const locM = html.match(/<div class="profileLocation">([\s\S]*?)<\/div>/);
   const links: Array<{ name: string; url: string }> = [];
@@ -72,7 +106,10 @@ export async function scrapeUserProfile(username: string, opts: FetchOpts = FETC
 
   return {
     url,
-    username: nameM?.[1] ? decodeEntities(nameM[1].trim()) : username,
+    username: actualUsername,
+    displayName,
+    userId,
+    memberSince,
     avatar: avatarM?.[1] ?? null,
     bio: bioM?.[1] ? decodeEntities(bioM[1].replace(/<[^>]+>/g, "").trim()) : null,
     location: locM?.[1] ? decodeEntities(locM[1].replace(/<[^>]+>/g, "").trim()) : null,
@@ -80,6 +117,8 @@ export async function scrapeUserProfile(username: string, opts: FetchOpts = FETC
     subscriber,
     ratingDistribution,
     favorites,
+    pinnedReview,
+    yearEndLists,
     stats: {
       ratings: stats["ratings"] ?? "0",
       reviews: stats["reviews"] ?? "0",
@@ -93,13 +132,23 @@ export async function scrapeUserProfile(username: string, opts: FetchOpts = FETC
 export async function scrapeUserRatings(
   username: string,
   opts: FetchOpts = FETCH_OPTS,
-  params: { page?: number; type?: string | null; decade?: string | null; sort?: string | null } = {},
-): Promise<{ username: string; page: number; type: string | null; decade: string | null; sort: string | null; ratings: UserRating[] }> {
-  const { page = 1, type = null, decade = null, sort = null } = params;
+  params: { page?: number; type?: string | null; decade?: string | null; sort?: string | null; year?: string | null; genreId?: string | null } = {},
+): Promise<{ username: string; page: number; type: string | null; decade: string | null; sort: string | null; year?: string | null; genreId?: string | null; ratings: UserRating[] }> {
+  const { page = 1, type = null, decade = null, sort = null, year = null, genreId = null } = params;
   let url = `${BASE}/user/${encodeURIComponent(username)}/ratings/`;
-  if (type) url += `${encodeURIComponent(type)}/`;
-  if (sort) url += `${encodeURIComponent(sort)}/`;
+  if (type === "perfect" || sort === "perfect") {
+    url += "perfect/";
+  } else {
+    if (type) url += `${encodeURIComponent(type)}/`;
+    if (sort) url += `${encodeURIComponent(sort)}/`;
+  }
   if (page > 1) url += `${page}/`;
+  const queryParams = new URLSearchParams();
+  if (decade) queryParams.set("d", decade);
+  if (year) queryParams.set("y", year);
+  if (genreId) queryParams.set("genreID", genreId);
+  const qs = queryParams.toString();
+  if (qs) url += `?${qs}`;
   if (decade) url += `?d=${encodeURIComponent(decade)}`;
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`User ratings fetch failed: ${res.status}`);
@@ -631,19 +680,63 @@ async function scrapeAlbumReviewRows(res: Response, fallbackUsername: string | n
     }));
 }
 
-export async function scrapeAlbumUserReviews(albumSlug: string, sort: string, page: number, opts: FetchOpts = FETCH_OPTS): Promise<{ slug: string; sort: string; page: number; reviews: UserReview[] }> {
+export async function scrapeAlbumUserReviews(
+  albumSlug: string,
+  sort: string,
+  page: number,
+  opts: FetchOpts = FETCH_OPTS,
+  type = "reviews",
+): Promise<AlbumUserReviewsResult> {
   const sortParam = sort === "recent" ? "recent" : sort === "worst" ? "worst" : "best";
   const params = new URLSearchParams({ sort: sortParam });
+  if (type === "ratings") params.set("type", "ratings");
   if (page > 1) params.set("p", String(page));
   const res = await fetch(`${BASE}/album/${albumSlug}/user-reviews/?${params}`, opts);
   if (!res.ok) throw new Error(`Album user reviews fetch failed: ${res.status}`);
-  return { slug: albumSlug, sort, page, reviews: await scrapeAlbumReviewRows(res, null) };
+  const html = await res.text();
+
+  const likePctM = html.match(/<strong[^>]*>(\d+%)<\/strong>\s*(?:of users )?like this album/i);
+  const dislikePctM = html.match(/<strong[^>]*>(\d+%)<\/strong>\s*(?:of users )?don't like this album/i);
+  const totalRatingsM = html.match(/showing \d+\s*-\s*\d+\s*of\s*([\d,]+)\s*user reviews/i)
+    ?? html.match(/User Score\s*\(([\d,]+)\)/i);
+
+  const distribution: AlbumDistributionRow[] = [];
+  for (const row of html.matchAll(/<tr class="distRow">([\s\S]*?)<\/tr>/g)) {
+    const rowHtml = row[1];
+    if (!rowHtml) continue;
+    const mLabel = rowHtml.match(/<td class="distLabel">([\s\S]*?)<\/td>/);
+    const mCount = rowHtml.match(/<td class="distCount">([\s\S]*?)<\/td>/);
+    const mBar = rowHtml.match(/width:\s*([\d.]+%)/);
+    const label = mLabel?.[1] ? decodeEntities(mLabel[1].replace(/<[^>]+>/g, "").trim()) : "";
+    const countStr = mCount?.[1] ? mCount[1].replace(/<[^>]+>/g, "").replace(/,/g, "").trim() : "";
+    if (label) {
+      distribution.push({
+        label,
+        count: countStr ? parseInt(countStr, 10) || 0 : 0,
+        percentage: mBar?.[1] ?? null,
+      });
+    }
+  }
+
+  const reviews = await scrapeAlbumReviewRows(new Response(html), null);
+  return {
+    slug: albumSlug,
+    sort,
+    type,
+    page,
+    totalRatings: totalRatingsM?.[1]?.replace(/,/g, "") ?? null,
+    likePercentage: likePctM?.[1] ?? null,
+    dislikePercentage: dislikePctM?.[1] ?? null,
+    distribution,
+    reviews,
+  };
 }
 
 export async function scrapeUserReviewDetail(username: string, slug: string, opts: FetchOpts = FETCH_OPTS): Promise<UserReviewDetail> {
   const url = `${BASE}/user/${encodeURIComponent(username)}/album/${slug}/`;
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`User review fetch failed: ${res.status}`);
+  const html = await res.text();
   const idM = slug.match(/^(\d+)/);
   const s = {
     artist: "",
@@ -738,8 +831,46 @@ export async function scrapeUserReviewDetail(username: string, slug: string, opt
         if (s.track && /^\d+$/.test(v)) s.track.rating = v;
       },
     })
-    .transform(res)
+    .transform(new Response(html))
     .arrayBuffer();
+
+  const commentsCountM = html.match(/<div class="comment_count">(\d+)<\/div>/)
+    ?? html.match(/class="commentButton[^"]*">[^<]*Comments \((\d+)\)/i);
+  const commentsCount = commentsCountM?.[1] ?? "0";
+
+  const streamingLinks: StreamingLink[] = [];
+  const linksIdx = html.indexOf('class="albumListLinks');
+  if (linksIdx !== -1) {
+    const linksChunk = html.slice(linksIdx, linksIdx + 2000);
+    for (const link of linksChunk.matchAll(/<a [^>]*href="([^"]+)"[^>]*>\s*<div>([^<]+)<\/div>\s*<\/a>/g)) {
+      if (link[1] && link[2]) {
+        streamingLinks.push({ platform: decodeEntities(link[2].trim()), url: link[1] });
+      }
+    }
+  }
+
+  const prevM = html.match(/«[\s\S]*?<a [^>]*href="([^"]*\/user\/[^"]*\/album\/[^"]*)"\s*title="([^"]*)"/i);
+  const nextM = html.match(/»[\s\S]*?<a [^>]*href="([^"]*\/user\/[^"]*\/album\/[^"]*)"\s*title="([^"]*)"/i);
+  const prevCoverM = html.match(/«[\s\S]*?<img [^>]*src="([^"]+)"/i);
+  const nextCoverM = html.match(/»[\s\S]*?<img [^>]*src="([^"]+)"/i);
+
+  const previousReview = prevM?.[1]
+    ? {
+        title: decodeEntities((prevM[2] ?? "").trim()),
+        url: prevM[1].startsWith("http") ? prevM[1] : BASE + prevM[1],
+        cover: prevCoverM?.[1] ?? null,
+      }
+    : null;
+
+  const nextReview = nextM?.[1]
+    ? {
+        title: decodeEntities((nextM[2] ?? "").trim()),
+        url: nextM[1].startsWith("http") ? nextM[1] : BASE + nextM[1],
+        cover: nextCoverM?.[1] ?? null,
+      }
+    : null;
+
+  const commentsList = await scrapeCommentRows(new Response(html));
 
   return {
     url,
@@ -754,7 +885,11 @@ export async function scrapeUserReviewDetail(username: string, slug: string, opt
     rating: s.rating.trim() || null,
     text: decodeEntities(s.text.trim()),
     likes: s.likes.trim() || "0",
-    comments: "0",
+    comments: commentsCount,
+    commentsList,
+    streamingLinks,
+    previousReview,
+    nextReview,
     date: s.dateExact || s.date.trim() || null,
     albumId: idM?.[1] ?? null,
     trackRatings: s.tracks
@@ -1030,4 +1165,251 @@ export async function scrapeUserBadges(
     badges,
   };
 }
+
+export async function scrapeUserYearEnd(
+  username: string,
+  year: number,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<UserYearEndResult> {
+  const url = `${BASE}/year-end/${encodeURIComponent(username)}/${year}/`;
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`User year-end fetch failed: ${res.status}`);
+  const html = await res.text();
+
+  const userM = html.match(/<div class="userName"><a [^>]*title="([^"]*)"[^>]*>([^<]*)<\/a><\/div>/i)
+    ?? html.match(/<div class="userName"><a [^>]*>([^<]*)<\/a><\/div>/i);
+  const displayName = userM?.[2] ? decodeEntities(userM[2].trim()) : userM?.[1] ? decodeEntities(userM[1].trim()) : username;
+  const avatarM = html.match(/<div class="userImage"><a [^>]*><img [^>]*src="([^"]+)"/i);
+  const avatar = avatarM?.[1] ?? null;
+
+  const coversByIndex = new Map<number, string>();
+  for (const cm of html.matchAll(/<div class="yearEnd block[^"]*" data-album-index="(\d+)">[\s\S]*?<img [^>]*src="([^"]+)"/g)) {
+    if (cm[1] && cm[2]) {
+      const idx = parseInt(cm[1], 10);
+      coversByIndex.set(idx, cm[2]);
+    }
+  }
+
+  const albums: UserYearEndAlbum[] = [];
+  const listItems = [...html.matchAll(/<li data-album-index="(\d+)"><a href="([^"]+)">([^<]+)<\/a><\/li>/g)];
+  for (const m of listItems) {
+    if (!m[1] || !m[2] || !m[3]) continue;
+    const idx = parseInt(m[1], 10);
+    const href = m[2];
+    const fullText = decodeEntities(m[3].trim());
+    const dashIdx = fullText.indexOf(" - ");
+    const artist = dashIdx > -1 ? fullText.slice(0, dashIdx).trim() : "";
+    const album = dashIdx > -1 ? fullText.slice(dashIdx + 3).trim() : fullText;
+    const albumUrl = href.startsWith("http") ? href : BASE + href;
+    const cover = coversByIndex.get(idx) ?? null;
+    albums.push({
+      rank: idx + 1,
+      artist,
+      artistUrl: "",
+      album,
+      albumUrl,
+      cover,
+    });
+  }
+
+  const parseCsvList = (cat: string): string[] => {
+    const m = html.match(new RegExp(`<span class="category">${cat}<\\/span>\\s*\\/\\s*([^<]+)`, "i"));
+    if (!m?.[1]) return [];
+    return m[1].split(",").map((s) => decodeEntities(s.trim())).filter(Boolean);
+  };
+
+  const genres = parseCsvList("genres");
+  const secondaries = parseCsvList("secondaries");
+  const descriptors = parseCsvList("descriptors");
+
+  return {
+    username,
+    displayName,
+    userUrl: `${BASE}/user/${encodeURIComponent(username)}/`,
+    avatar,
+    year,
+    albums,
+    genres,
+    secondaries,
+    descriptors,
+  };
+}
+
+export async function scrapeUserDistribution(
+  usernameOrId: string,
+  format = "albums",
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<UserDistributionResult> {
+  let userId = usernameOrId;
+  if (!/^\d+$/.test(usernameOrId)) {
+    const profile = await scrapeUserProfile(usernameOrId, opts);
+    if (!profile.userId) throw new Error("Could not determine user ID for distribution");
+    userId = profile.userId;
+  }
+  const res = await fetch(`${BASE}/scripts/changeDistribution.php`, {
+    ...opts,
+    method: "POST",
+    headers: {
+      ...opts.headers,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    body: new URLSearchParams({ type: "profile", format, itemID: userId }).toString(),
+  });
+  if (!res.ok) throw new Error(`User distribution fetch failed: ${res.status}`);
+  const html = await res.text();
+  const rows: AlbumDistributionRow[] = [];
+  for (const row of html.matchAll(/<tr class="distRow">([\s\S]*?)<\/tr>/g)) {
+    const rowHtml = row[1];
+    if (!rowHtml) continue;
+    const mLabel = rowHtml.match(/<td class="distLabel">([\s\S]*?)<\/td>/);
+    const mCount = rowHtml.match(/<td class="distCount">([\s\S]*?)<\/td>/);
+    const mBar = rowHtml.match(/width:\s*([\d.]+%)/);
+    const label = mLabel?.[1] ? decodeEntities(mLabel[1].replace(/<[^>]+>/g, "").trim()) : "";
+    const countStr = mCount?.[1] ? mCount[1].replace(/<[^>]+>/g, "").replace(/,/g, "").trim() : "";
+    if (label) {
+      rows.push({
+        label,
+        count: countStr ? parseInt(countStr, 10) || 0 : 0,
+        percentage: mBar?.[1] ?? null,
+      });
+    }
+  }
+  return { username: usernameOrId, format, rows };
+}
+
+export async function scrapeUserArtistRatings(
+  usernameOrId: string,
+  artistId: string,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<UserArtistRatingsResult> {
+  let userId = usernameOrId;
+  if (!/^\d+$/.test(usernameOrId)) {
+    const profile = await scrapeUserProfile(usernameOrId, opts);
+    if (!profile.userId) throw new Error("Could not determine user ID for artist ratings");
+    userId = profile.userId;
+  }
+  const res = await fetch(`${BASE}/scripts/showArtistRatings.php`, {
+    ...opts,
+    method: "POST",
+    headers: {
+      ...opts.headers,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    body: new URLSearchParams({ userID: userId, artistID: artistId }).toString(),
+  });
+  if (!res.ok) throw new Error(`Artist ratings fetch failed: ${res.status}`);
+  const html = await res.text();
+  const ratings: UserArtistRatingItem[] = [];
+
+  for (const tr of html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
+    const r = tr[1];
+    if (!r) continue;
+    const rankM = r.match(/<td class="rank">(\d+)<\/td>/);
+    const coverM = r.match(/<td class="tableCover">[\s\S]*?<img [^>]*src="([^"]+)"/);
+    const albumM = r.match(/<div class="largeTitle"><a href="([^"]+)">([^<]+)<\/a><\/div>/);
+    const yearM = r.match(/<div style="color: gray; font-size: \.9em;">(\d{4})<\/div>/);
+    const scoreM = r.match(/<td class="tableRating"><div class="[^"]*-font">(\d+)<\/div><\/td>/);
+    const revM = r.match(/<a href="([^"]*\/user\/[^"]*\/album\/[^"]*)">/);
+
+    if (albumM?.[1] && albumM[2]) {
+      ratings.push({
+        rank: rankM?.[1] ? parseInt(rankM[1], 10) : ratings.length + 1,
+        album: decodeEntities(albumM[2].trim()),
+        albumUrl: albumM[1].startsWith("http") ? albumM[1] : BASE + albumM[1],
+        cover: coverM?.[1] ?? null,
+        year: yearM?.[1] ?? null,
+        score: scoreM?.[1] ?? null,
+        reviewUrl: revM?.[1] ? (revM[1].startsWith("http") ? revM[1] : BASE + revM[1]) : null,
+      });
+    }
+  }
+
+  return {
+    username: usernameOrId,
+    artistId,
+    ratings,
+  };
+}
+
+export async function scrapeUserAlbumTrackRatings(
+  usernameOrId: string,
+  albumIdOrSlug: string,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<UserAlbumTrackRatingsResult> {
+  let userId = usernameOrId;
+  if (!/^\d+$/.test(usernameOrId)) {
+    const profile = await scrapeUserProfile(usernameOrId, opts);
+    if (!profile.userId) throw new Error("Could not determine user ID for track ratings");
+    userId = profile.userId;
+  }
+  const albumId = albumIdOrSlug.match(/^(\d+)/)?.[1] ?? albumIdOrSlug;
+
+  const res = await fetch(`${BASE}/scripts/trackRatings/showUserTrackRatings.php`, {
+    ...opts,
+    method: "POST",
+    headers: {
+      ...opts.headers,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    body: new URLSearchParams({ albumID: albumId, userID: userId }).toString(),
+  });
+  if (!res.ok) throw new Error(`User track ratings fetch failed: ${res.status}`);
+  const html = await res.text();
+
+  const albumTitleM = html.match(/<h1 class="albumTitle"><a [^>]*>([^<]+)<\/a><\/h1>/i);
+  const fullTitle = albumTitleM?.[1] ? decodeEntities(albumTitleM[1].trim()) : "";
+  const dashIdx = fullTitle.indexOf(" - ");
+  const artist = dashIdx > -1 ? fullTitle.slice(0, dashIdx).trim() : "";
+  const album = dashIdx > -1 ? fullTitle.slice(dashIdx + 3).trim() : fullTitle;
+
+  const coverM = html.match(/<div class="albumHeaderCover">[\s\S]*?<img [^>]*data-src="([^"]+)"/i)
+    ?? html.match(/<div class="albumHeaderCover">[\s\S]*?<img [^>]*src="([^"]+)"/i);
+  const cover = coverM?.[1] ?? null;
+
+  const tracks: UserTrackRatingEntry[] = [];
+  for (const tr of html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
+    const r = tr[1];
+    if (!r) continue;
+    const numM = r.match(/<td class="trackNumber">(\d+)<\/td>/i);
+    const titleM = r.match(/<td class="trackTitle"><a href="([^"]*)">([^<]*)<\/a>/i);
+    const lenM = r.match(/<div class="length">([^<]*)<\/div>/i);
+    const scoreM = r.match(/<td class="trackRating">(?:<span[^>]*>)?([^<]+)(?:<\/span>)?<\/td>/i);
+
+    const feat: string[] = [];
+    const featBlock = r.match(/<div class="featuredArtists">([\s\S]*?)<\/div>/i);
+    if (featBlock?.[1]) {
+      for (const fa of featBlock[1].matchAll(/<a [^>]*>([^<]+)<\/a>/g)) {
+        if (fa[1]) feat.push(decodeEntities(fa[1].trim()));
+      }
+    }
+
+    if (numM?.[1] && titleM?.[2] && titleM[1]) {
+      const rawScore = scoreM?.[1]?.trim();
+      const score = rawScore && rawScore !== "NR" ? rawScore : null;
+      tracks.push({
+        number: numM[1],
+        title: decodeEntities(titleM[2].trim()),
+        url: titleM[1].startsWith("http") ? titleM[1] : BASE + titleM[1],
+        length: lenM?.[1]?.trim() ?? "",
+        score,
+        features: feat,
+      });
+    }
+  }
+
+  return {
+    username: usernameOrId,
+    albumId,
+    album,
+    artist,
+    cover,
+    tracks,
+  };
+}
+
+
+
 

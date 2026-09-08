@@ -1,4 +1,4 @@
-import { BASE, decodeEntities } from "../constants.js";
+import { BASE, decodeEntities, cleanImageUrl } from "../constants.js";
 import type { AlbumBlock } from "../types.js";
 
 export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
@@ -95,6 +95,7 @@ export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
     a.artist = decodeEntities(a.artist.trim());
     a.title = decodeEntities(a.title.trim());
     a.releaseDate = a.releaseDate.trim();
+    a.cover = cleanImageUrl(a.cover.trim());
   }
   return albums;
 }

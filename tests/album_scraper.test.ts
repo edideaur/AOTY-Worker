@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { findAlbumUrl, scrapeAlbumPage, scrapeAlbumTags, scrapeAlbumCriticReviews, scrapeRandomAlbum, scrapeAlbumTagAutocomplete } from "../src/scrapers/album.js";
+import { scrapeAlbumUsers, scrapeAlbumImages } from "../src/scrapers/albumExtras.js";
 
 describe("findAlbumUrl unit test", () => {
   it("finds the first matching album URL", async () => {
@@ -42,19 +43,22 @@ describe("scrapeAlbumPage unit test", () => {
         "byArtist": { "name": "Kanye West", "url": "https://www.albumoftheyear.org/artist/183-kanye-west/" },
         "image": "https://cdn.albumoftheyear.org/album/1998.jpg",
         "datePublished": "2010-11-22",
+        "dateCreated": "2010-10-01",
+        "dateModified": "2024-01-01",
         "genre": ["Hip Hop", "Art Pop"]
       }
       </script>
       <button class="showImage" data-id="1998"></button>
       <div class="albumCriticScore"><a title="94.2">94</a></div>
-      <div class="albumCriticScoreBox"><div class="text numReviews">45 reviews</div></div>
+      <div class="albumCriticScoreBox"><div class="text numReviews">45 reviews</div><div class="text gray">2010 Ratings: <strong><a href="/ratings/6-highest-rated/2010/1#rank-1">#1</a></strong> / 50</div></div>
       <div class="albumCriticScoreSub">Based on 45 reviews</div>
       <div class="albumUserScore"><a title="91.1">91</a></div>
-      <div class="albumUserScoreBox"><div class="text numReviews">15,000 ratings</div></div>
+      <div class="albumUserScoreBox"><div class="text numReviews">15,000 ratings</div><div class="text gray">2010 Ratings: <strong><a href="/ratings/user-highest-rated/2010/1/#rank-2">#2</a></strong></div></div>
       <div class="albumUserScoreSub">Based on 15,000 ratings</div>
       <div class="albumTopBox info">
         <div class="detailRow">Release Date</div><div class="detailRow">LP</div>
         <div class="detailRow"><a href="/label/1-def-jam/">Def Jam</a></div>
+        <div class="detailRow"><a href="/genre/2-hip-hop/">Hip Hop</a><br/><a href="/genre/1-art-pop/"><div class="secondary">Art Pop</div></a></div>
         <div class="detailRow"><a href="/tag/masterpiece/">Masterpiece</a></div>
         <div class="detailRow vibes"><div class="vibe"><a href="/all/releases/vibe/epic/">epic</a></div></div>
         <div class="detailRow"><span class="actionBlank showAlbumCredits" data-type="2">Producer</span>: <a href="/artist/183-kanye-west/">Kanye West</a></div>
@@ -174,6 +178,12 @@ describe("scrapeAlbumPage unit test", () => {
       expect(album.userScore).toBe("91");
       expect(album.userScoreExact).toBe("91.1");
       expect(album.format).toBe("LP");
+      expect(album.dateCreated).toBe("2010-10-01");
+      expect(album.dateModified).toBe("2024-01-01");
+      expect(album.secondaryGenres).toEqual(["Art Pop"]);
+      expect(album.criticRanking?.rank).toBe(1);
+      expect(album.criticRanking?.total).toBe(50);
+      expect(album.userRanking?.rank).toBe(2);
       expect(album.label).toBe("Def Jam");
       expect(album.labels.length).toBe(1);
       expect(album.labels[0].name).toBe("Def Jam");
@@ -381,6 +391,22 @@ describe("scrapeAlbumTags & scrapeAlbumCriticReviews unit test", () => {
       expect(album.title).toBe("Random Album");
       expect(album.artist).toBe("Random Artist");
 
+      // Random album with filter
+      let requestedUrl = "";
+      callCount = 0;
+      globalThis.fetch = async (url: string | URL | Request) => {
+        callCount++;
+        if (callCount === 1) {
+          requestedUrl = String(url);
+          return new Response(refreshHtml, { status: 200 });
+        }
+        return new Response(albumHtml, { status: 200 });
+      };
+      await scrapeRandomAlbum(undefined, { genre: "7", yearFrom: "1990", yearTo: "1999" });
+      expect(requestedUrl).toContain("genre=7");
+      expect(requestedUrl).toContain("yearFrom=1990");
+      expect(requestedUrl).toContain("yearTo=1999");
+
         globalThis.fetch = async () => new Response("<html>No redirect</html>", { status: 200 });
       expect(scrapeRandomAlbum()).rejects.toThrow("Could not find redirect URL on random album page");
     } finally {
@@ -399,6 +425,46 @@ describe("scrapeAlbumTags & scrapeAlbumCriticReviews unit test", () => {
         globalThis.fetch = async () => new Response(JSON.stringify(json), { status: 200 });
       const tags = await scrapeAlbumTagAutocomplete("hip");
       expect(tags).toEqual(["hip hop", "jazz & blues"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("handles scrapeAlbumUsers for likes and library", async () => {
+    const html = `
+      <div class="userBlock ten"><a href="/user/panquesito/"><img src="https://cdn.aoty.org/p.jpg" /></a><div class="userName"><a href="/user/panquesito/">panquesito</a></div></div>
+    `;
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response(html, { status: 200 });
+      const likes = await scrapeAlbumUsers("albumLikes", "123", 0);
+      expect(likes.albumId).toBe("123");
+      expect(likes.type).toBe("albumLikes");
+      expect(likes.users.length).toBe(1);
+      expect(likes.users[0]?.username).toBe("panquesito");
+      expect(likes.users[0]?.url).toContain("/user/panquesito/");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("handles scrapeAlbumImages correctly", async () => {
+    const html = `
+      <div id="curImage"><img src="https://cdn.aoty.org/main.jpg" /></div>
+      <div id="img_0" class="thumbnail selected"><button data-id="0"><img src="https://cdn.aoty.org/thumb0.jpg" alt="Front Cover" title="Front Cover" /></button></div>
+      <div id="img_1" class="thumbnail"><button data-id="1"><img src="https://cdn.aoty.org/thumb1.jpg" alt="Back Cover" title="Back Cover" /></button></div>
+    `;
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response(html, { status: 200 });
+      const res = await scrapeAlbumImages("123");
+      expect(res.albumId).toBe("123");
+      expect(res.mainImage).toBe("https://cdn.aoty.org/main.jpg");
+      expect(res.images.length).toBe(2);
+      expect(res.images[0]?.title).toBe("Front Cover");
+      expect(res.images[0]?.isDefault).toBe(true);
+      expect(res.images[1]?.title).toBe("Back Cover");
+      expect(res.images[1]?.isDefault).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
     }

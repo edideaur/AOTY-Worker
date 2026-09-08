@@ -11,6 +11,7 @@ import {
   scrapeTagPage,
   scrapeArtistsOverview,
   scrapeSubGenres,
+  scrapeGenreName,
 } from "../src/scrapers/entities.js";
 
 describe("entities scrapers unit tests", () => {
@@ -406,6 +407,18 @@ describe("entities scrapers unit tests", () => {
       expect(res.subgenres[0].name).toBe("Boom Bap");
       expect(res.subgenres[0].url).toBe("https://www.albumoftheyear.org/genre/305-boom-bap/");
       expect(res.subgenres[1].name).toBe("Trap & Rap");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("parses genre name from getGenreName.php correctly", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response("Rock", { status: 200 });
+      const res = await scrapeGenreName("7");
+      expect(res.id).toBe("7");
+      expect(res.name).toBe("Rock");
     } finally {
       globalThis.fetch = originalFetch;
     }

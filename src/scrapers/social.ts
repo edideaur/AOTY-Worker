@@ -1,8 +1,12 @@
 import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, type FetchOpts } from "../constants.js";
 import type {
+  AllCommentsResult,
   AotyComment,
   ChangelogEntry,
+  CorrectionChangeLogEntry,
+  CorrectionItem,
   CriticListRank,
+  EntityCorrectionsResult,
   FaqItem,
   NewsDetail,
   NewsSearchItem,
@@ -653,3 +657,130 @@ export async function scrapeAlbumUserLists(albumSlug: string, opts: FetchOpts = 
   if (!res.ok) throw new Error(`Album user lists fetch failed: ${res.status}`);
   return scrapeUserListRows(res);
 }
+
+export async function scrapeAllComments(
+  type: string,
+  itemId: string,
+  albumId?: string | null,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<AllCommentsResult> {
+  const bodyParams = new URLSearchParams({ type, itemID: itemId });
+  if (albumId) bodyParams.set("albumID", albumId);
+
+  const res = await fetch(`${BASE}/scripts/viewAllComments.php`, {
+    ...opts,
+    method: "POST",
+    headers: {
+      ...opts.headers,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    body: bodyParams.toString(),
+  });
+  if (!res.ok) throw new Error(`All comments fetch failed: ${res.status}`);
+  const html = await res.text();
+  const comments = await scrapeCommentRows(new Response(html));
+  return {
+    type,
+    itemId,
+    albumId: albumId ?? null,
+    comments,
+  };
+}
+
+export async function scrapeEntityCorrections(
+  type: "album" | "artist" | "song",
+  idOrSlug: string,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<EntityCorrectionsResult> {
+  let url: string;
+  if (type === "album") {
+    const id = idOrSlug.match(/^(\d+)/)?.[1] ?? idOrSlug;
+    url = `${BASE}/album/corrections.php?id=${encodeURIComponent(id)}`;
+  } else if (type === "artist") {
+    url = `${BASE}/artist/${encodeURIComponent(idOrSlug)}/corrections/`;
+  } else {
+    const id = idOrSlug.match(/^(\d+)/)?.[1] ?? idOrSlug;
+    url = `${BASE}/song/corrections.php?id=${encodeURIComponent(id)}`;
+  }
+
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`Corrections fetch failed: ${res.status}`);
+  const html = await res.text();
+
+  const titleM = html.match(/<h1 class="(?:albumTitle|headline)[^"]*">\s*<a [^>]*>([^<]+)<\/a>/i);
+  const title = titleM?.[1] ? decodeEntities(titleM[1].trim()) : idOrSlug;
+
+  const addedOnM = html.match(/Added on\s*<strong>([^<]+)<\/strong>/i);
+  const addedOn = addedOnM?.[1] ? decodeEntities(addedOnM[1].trim()) : null;
+
+  const addedByM = html.match(/by\s*<strong>\s*<a href="([^"]*)">([^<]*)<\/a>\s*<\/strong>/i);
+  const addedBy = addedByM?.[2] ? decodeEntities(addedByM[2].trim()) : null;
+  const addedByUrl = addedByM?.[1] ? (addedByM[1].startsWith("http") ? addedByM[1] : BASE + addedByM[1]) : null;
+
+  const sourceM = html.match(/<strong>Source:\s*<\/strong>\s*<a href="([^"]+)"/i);
+  const sourceUrl = sourceM?.[1] ?? null;
+
+  const locked = html.includes("Locked for moderators only") || html.includes("notice");
+
+  const changeLog: CorrectionChangeLogEntry[] = [];
+  for (const row of html.matchAll(/<div class="logRow">([\s\S]*?)<\/div>/g)) {
+    const r = row[1];
+    if (!r) continue;
+    const userM = r.match(/<strong><a href="([^"]*)">([^<]*)<\/a><\/strong>/i);
+    const roleM = r.match(/<i title="([^"]*)"/i);
+    const dateM = r.match(/<span class="gray-font">([^<]*)<\/span>/i);
+
+    const cleanText = decodeEntities(
+      r.replace(/<span class="gray-font">[\s\S]*?<\/span>/i, "")
+        .replace(/<strong><a [^>]*>[^<]*<\/a><\/strong>/i, "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim(),
+    );
+
+    if (userM?.[2] && userM[1]) {
+      changeLog.push({
+        user: decodeEntities(userM[2].trim()),
+        userUrl: userM[1].startsWith("http") ? userM[1] : BASE + userM[1],
+        role: roleM?.[1] ?? null,
+        action: cleanText,
+        date: dateM?.[1] ? dateM[1].trim() : null,
+      });
+    }
+  }
+
+  const corrections: CorrectionItem[] = [];
+  for (const m of html.matchAll(/<div class="[^"]*correction[^"]*" id="correction(\d+)">([\s\S]*?)(?=<div[^>]*id="correction\d+"|<div class="clear"|<div class="footer"|$)/gi)) {
+    const cid = m[1];
+    const content = m[2];
+    if (!cid || !content) continue;
+    const titleMatch = content.match(/<div class="correctionTitle">([^<]+)<\/div>/i);
+    const statusMatch = content.match(/<span class="status[^"]*">([^<]+)<\/span>/i);
+    const submitterMatch = content.match(/by <a href="([^"]*)">([^<]*)<\/a>/i);
+    const dateMatch = content.match(/<span class="gray-font">([^<]*)<\/span>/i);
+
+    corrections.push({
+      id: cid,
+      title: titleMatch?.[1] ? decodeEntities(titleMatch[1].trim()) : "",
+      status: statusMatch?.[1] ? decodeEntities(statusMatch[1].trim()) : "Pending",
+      submittedBy: submitterMatch?.[2] ? decodeEntities(submitterMatch[2].trim()) : null,
+      submittedByUrl: submitterMatch?.[1] ? (submitterMatch[1].startsWith("http") ? submitterMatch[1] : BASE + submitterMatch[1]) : null,
+      date: dateMatch?.[1] ? dateMatch[1].trim() : null,
+    });
+  }
+
+  return {
+    id: idOrSlug,
+    title,
+    url,
+    addedOn,
+    addedBy,
+    addedByUrl,
+    sourceUrl,
+    locked,
+    changeLog,
+    corrections,
+  };
+}
+

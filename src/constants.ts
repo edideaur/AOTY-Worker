@@ -60,6 +60,13 @@ export function decodeEntities(str: string): string {
   return str;
 }
 
+export function cleanImageUrl<T extends string | null | undefined>(url: T): T {
+  if (!url) return url;
+  return url
+    .replace(/\/cdn-cgi\/image\/[^/]+\//g, "/")
+    .replace(/\/\d+x\d+\//g, "/") as T;
+}
+
 export const RES_HEADERS: HeadersInit = {
   "Content-Type": "application/json",
   "Access-Control-Allow-Origin": "*",

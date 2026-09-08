@@ -1,5 +1,5 @@
 import { BASE, FETCH_OPTS, decodeEntities, type FetchOpts } from "../constants.js";
-import type { ChartItem, SearchArtist } from "../types.js";
+import type { ChartItem, RatingGenresResult, RatingSourcesResult, SearchArtist } from "../types.js";
 
 type RawChartItem = Omit<ChartItem, "artist" | "album">;
 
@@ -137,3 +137,71 @@ export async function scrapeTopArtists(genre: string | null, scope: string, opts
     .arrayBuffer();
   return artists.map((a) => ({ ...a, name: decodeEntities((a.name ?? "").trim()) }));
 }
+
+export async function scrapeRatingSources(
+  year = String(new Date().getFullYear()),
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<RatingSourcesResult> {
+  const res = await fetch(`${BASE}/scripts/sourceSelect.php`, {
+    ...opts,
+    method: "POST",
+    headers: {
+      ...opts.headers,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    body: new URLSearchParams({ year, sourceID: "6" }).toString(),
+  });
+  if (!res.ok) throw new Error(`Rating sources fetch failed: ${res.status}`);
+  const html = await res.text();
+  const sources: Array<{ slug: string; name: string; url: string }> = [];
+  for (const m of html.matchAll(/<a href="(\/ratings\/([^/]+)\/[^"]*)">([^<]+)<\/a>/g)) {
+    const url = m[1];
+    const slug = m[2];
+    const name = m[3];
+    if (url && slug && name) {
+      sources.push({
+        slug,
+        name: decodeEntities(name.trim()),
+        url: BASE + url,
+      });
+    }
+  }
+  return { year, sources };
+}
+
+export async function scrapeRatingGenres(
+  year = String(new Date().getFullYear()),
+  type = "criticHighestRated",
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<RatingGenresResult> {
+  const res = await fetch(`${BASE}/scripts/genreSelect.php`, {
+    ...opts,
+    method: "POST",
+    headers: {
+      ...opts.headers,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    body: new URLSearchParams({ type, year, sourceID: "6", sort: "weighted" }).toString(),
+  });
+  if (!res.ok) throw new Error(`Rating genres fetch failed: ${res.status}`);
+  const html = await res.text();
+  const genres: Array<{ id: string; slug: string; name: string; url: string }> = [];
+  for (const m of html.matchAll(/<a href="(\/genre\/([^/]+)\/[^"]*)">([^<]+)<\/a>/g)) {
+    const url = m[1];
+    const slug = m[2];
+    const name = m[3];
+    if (url && slug && name) {
+      const idM = slug.match(/^(\d+)/);
+      genres.push({
+        id: idM?.[1] ?? "",
+        slug,
+        name: decodeEntities(name.trim()),
+        url: BASE + url,
+      });
+    }
+  }
+  return { year, type, genres };
+}
+

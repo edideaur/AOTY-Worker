@@ -1,5 +1,13 @@
 import { BASE, FETCH_OPTS, decodeEntities, type FetchOpts } from "../constants.js";
-import type { ListDetailItem, ListEntry } from "../types.js";
+import type {
+  ListDetailItem,
+  ListEntry,
+  ListSummaryResult,
+  CommunityYearEndResult,
+  YearEndAggregateItem,
+  YearEndAggregateBreakdown,
+  StreamingLink,
+} from "../types.js";
 
 export async function scrapeListsIndex(url: string, opts: FetchOpts = FETCH_OPTS): Promise<ListEntry[]> {
   const res = await fetch(url, opts);
@@ -161,3 +169,104 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
     }),
   };
 }
+
+export function parseListSummaryRows(html: string): { totalLists: number | null; items: YearEndAggregateItem[] } {
+  const m_total = html.match(/(?:obtained from the|based on)\s*<strong>([\d,]+)<\/strong>\s*lists/i);
+  const totalLists = m_total?.[1] ? parseInt(m_total[1].replace(/,/g, ""), 10) : null;
+
+  const items: YearEndAggregateItem[] = [];
+  const rows = [...html.matchAll(/<div class="listSummaryRow">([\s\S]*?)(?=<div class="listSummaryRow"|<div id="comments"|<div class="footer"|$)/g)];
+
+  for (const match of rows) {
+    const r = match[1];
+    if (!r) continue;
+
+    const rankM = r.match(/<div class="listSummaryRank[^"]*">(\d+)<\/div>/);
+    const rank = rankM?.[1] ? parseInt(rankM[1], 10) : 0;
+
+    const coverM = r.match(/<div class="listSummaryCover[^"]*">[\s\S]*?<img [^>]*src="([^"]+)"/);
+    const cover = coverM?.[1] ?? null;
+
+    const albumM = r.match(/<h2 class="albumTitle[^"]*"><a [^>]*href="([^"]+)">([^<]+)<\/a><\/h2>/);
+    const albumUrl = albumM?.[1] ? (albumM[1].startsWith("http") ? albumM[1] : BASE + albumM[1]) : "";
+    const album = albumM?.[2] ? decodeEntities(albumM[2].trim()) : "";
+
+    const artistM = r.match(/<h3 class="artistTitle[^"]*"><a [^>]*href="([^"]+)">([^<]+)<\/a><\/h3>/);
+    const artistUrl = artistM?.[1] ? (artistM[1].startsWith("http") ? artistM[1] : BASE + artistM[1]) : "";
+    const artist = artistM?.[2] ? decodeEntities(artistM[2].trim()) : "";
+
+    const pointsM = r.match(/<div class="summaryPoints[^"]*">[\s\S]*?([\d,]+)\s*Points/i);
+    const points = pointsM?.[1] ? parseInt(pointsM[1].replace(/,/g, ""), 10) : 0;
+
+    const getCount = (head: string): number => {
+      const escaped = head.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const m = r.match(new RegExp(`<div class="head">${escaped}<\\/div>\\s*<div class="count">([\\d,]+)<\\/div>`));
+      return m?.[1] ? parseInt(m[1].replace(/,/g, ""), 10) : 0;
+    };
+
+    const breakdown: YearEndAggregateBreakdown = {
+      firstPlace: getCount("1st Place"),
+      secondPlace: getCount("2nd Place"),
+      thirdPlace: getCount("3rd Place"),
+      top10: getCount("Top 10"),
+      top25: getCount("Top 25"),
+      other: getCount("Other"),
+    };
+
+    const streamingLinks: StreamingLink[] = [];
+    const linksIdx = r.indexOf('class="albumListLinks');
+    if (linksIdx !== -1) {
+      const linksChunk = r.slice(linksIdx);
+      for (const link of linksChunk.matchAll(/<a [^>]*href="([^"]+)"[^>]*>\s*<div>([^<]+)<\/div>\s*<\/a>/g)) {
+        if (link[1] && link[2]) {
+          streamingLinks.push({
+            platform: decodeEntities(link[2].trim()),
+            url: link[1],
+          });
+        }
+      }
+    }
+
+    if (album || artist) {
+      items.push({
+        rank,
+        artist,
+        artistUrl,
+        album,
+        albumUrl,
+        cover,
+        points,
+        breakdown,
+        streamingLinks,
+      });
+    }
+  }
+
+  return { totalLists, items };
+}
+
+export async function scrapeYearEndSummary(
+  year: number,
+  genre: string | null = null,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<ListSummaryResult> {
+  const url = genre ? `${BASE}/list/summary/${year}/${encodeURIComponent(genre)}/` : `${BASE}/list/summary/${year}/`;
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`List summary fetch failed: ${res.status}`);
+  const html = await res.text();
+  const { totalLists, items } = parseListSummaryRows(html);
+  return { year, genre, totalLists, items };
+}
+
+export async function scrapeCommunityYearEnd(
+  year: number,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<CommunityYearEndResult> {
+  const url = `${BASE}/year-end/${year}/`;
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`Community year-end fetch failed: ${res.status}`);
+  const html = await res.text();
+  const { totalLists, items } = parseListSummaryRows(html);
+  return { year, totalLists, items };
+}
+

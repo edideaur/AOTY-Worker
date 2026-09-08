@@ -54,4 +54,16 @@ describe("Static & well-known routes smoke tests", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("https://prigoana.com/favicon.png");
   });
+
+  it("GET / serves Scalar with AOTY custom color theme", async () => {
+    const res = await fetch("/");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("--scalar-color-accent: #2ebd59");
+    expect(html).toContain("--scalar-background-1: #202225");
+    expect(html).toContain("--scalar-background-2: #2f3136");
+    expect(html).toContain("Open+Sans");
+    expect(html).toContain("Roboto");
+    expect(html).toContain("data-configuration");
+  });
 });

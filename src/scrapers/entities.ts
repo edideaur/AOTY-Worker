@@ -855,3 +855,14 @@ export async function scrapeSubGenres(genreId: string, opts: FetchOpts = FETCH_O
   return { genreId, heading, subgenres };
 }
 
+export async function scrapeGenreName(
+  genreId: string,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<{ id: string; name: string }> {
+  const res = await fetch(`${BASE}/scripts/getGenreName.php?id=${encodeURIComponent(genreId)}`, opts);
+  if (!res.ok) throw new Error(`Genre name fetch failed: ${res.status}`);
+  const text = (await res.text()).trim();
+  return { id: genreId, name: decodeEntities(text) };
+}
+
+

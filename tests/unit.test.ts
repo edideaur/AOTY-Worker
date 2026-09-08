@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import { decodeEntities, RES_HEADERS, PROBLEM_HEADERS } from "../src/constants.js";
+import { decodeEntities, cleanImageUrl, RES_HEADERS, PROBLEM_HEADERS } from "../src/constants.js";
+import { sanitizeImageUrls } from "../src/index.js";
 import { openApiSpec } from "../src/openapi.js";
 import { POSTMAN_BODY } from "../src/postman.js";
 
@@ -104,5 +105,54 @@ describe("Postman collection", () => {
     expect(collection.info.name).toBe("AOTY API");
     expect(Array.isArray(collection.item)).toBe(true);
     expect(collection.item.length).toBeGreaterThan(0);
+  });
+});
+
+describe("cleanImageUrl and sanitizeImageUrls", () => {
+  it("strips /200x0/ and other dimension prefixes from AOTY CDN URLs", () => {
+    expect(cleanImageUrl("https://cdn2.albumoftheyear.org/200x0/album/1931016-prima_162200.jpg"))
+      .toBe("https://cdn2.albumoftheyear.org/album/1931016-prima_162200.jpg");
+    expect(cleanImageUrl("https://cdn2.albumoftheyear.org/375x0/album/564912-dont-be-dumb.jpg"))
+      .toBe("https://cdn2.albumoftheyear.org/album/564912-dont-be-dumb.jpg");
+    expect(cleanImageUrl("https://cdn2.albumoftheyear.org/50x0/album/100.jpg"))
+      .toBe("https://cdn2.albumoftheyear.org/album/100.jpg");
+    expect(cleanImageUrl("https://cdn2.albumoftheyear.org/750x0/album/100.jpg"))
+      .toBe("https://cdn2.albumoftheyear.org/album/100.jpg");
+  });
+
+  it("strips cdn-cgi/image/ resize prefixes", () => {
+    expect(cleanImageUrl("https://cdn.albumoftheyear.org/cdn-cgi/image/width=200,format=auto/album/1884687-lost-weekend.jpg"))
+      .toBe("https://cdn.albumoftheyear.org/album/1884687-lost-weekend.jpg");
+    expect(cleanImageUrl("https://cdn.albumoftheyear.org/cdn-cgi/image/width=350,format=auto/l/full/35652.jpg"))
+      .toBe("https://cdn.albumoftheyear.org/l/full/35652.jpg");
+  });
+
+  it("leaves non-thumbnail URLs and null unchanged", () => {
+    expect(cleanImageUrl(null)).toBeNull();
+    expect(cleanImageUrl(undefined)).toBeUndefined();
+    expect(cleanImageUrl("https://cdn2.albumoftheyear.org/album/1931016-prima_162200.jpg"))
+      .toBe("https://cdn2.albumoftheyear.org/album/1931016-prima_162200.jpg");
+    expect(cleanImageUrl("https://external.com/photo.jpg"))
+      .toBe("https://external.com/photo.jpg");
+  });
+
+  it("recursively sanitizes image URLs in objects and arrays", () => {
+    const input = {
+      title: "Album",
+      cover: "https://cdn2.albumoftheyear.org/200x0/album/1931016-prima_162200.jpg",
+      nested: {
+        avatar: "https://cdn.albumoftheyear.org/cdn-cgi/image/width=150,format=auto/user/pic.jpg",
+      },
+      list: [
+        { image: "https://cdn2.albumoftheyear.org/375x0/album/pic2.jpg" },
+        "https://cdn2.albumoftheyear.org/50x0/album/pic3.jpg",
+      ],
+    };
+
+    const sanitized = sanitizeImageUrls(input);
+    expect(sanitized.cover).toBe("https://cdn2.albumoftheyear.org/album/1931016-prima_162200.jpg");
+    expect(sanitized.nested.avatar).toBe("https://cdn.albumoftheyear.org/user/pic.jpg");
+    expect(sanitized.list[0].image).toBe("https://cdn2.albumoftheyear.org/album/pic2.jpg");
+    expect(sanitized.list[1]).toBe("https://cdn2.albumoftheyear.org/album/pic3.jpg");
   });
 });

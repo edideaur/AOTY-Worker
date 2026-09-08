@@ -14,7 +14,7 @@ const sampleHtml = `
     </script>
   </head>
   <body>
-    <h1 class="headline artistHeadline pubHeadline criticHeadline songHeadline userHeadline">Title</h1>
+    <h1 class="headline artistHeadline pubHeadline criticHeadline songHeadline userHeadline"><a href="/test/">Title</a></h1>
     <div class="date">May 21, 1997</div>
     <div class="content"><div class="title"><a href="/l/1/">News Item</a></div></div>
     <div class="mediaContainer" id="link1"><div class="content"><div class="title"><a href="/l/1/">News</a></div></div></div>
@@ -71,6 +71,22 @@ const sampleHtml = `
     <button class="artistCreditList" data-album-class="c1" data-song-class="c2">Producer</button> <span class="facetCount">(5)</span>
     <div class="genreRow"><a href="/genre/1-rock/">Rock</a><span class="count">10</span></div>
     <div class="badgeRow"><div class="title">Reviewer</div></div>
+    <button class="showImage" data-user-id="123"></button>
+    <div class="userName"><a title="zed">Zed</a></div>
+    <ol class="ranked"><li data-album-index="0"><a href="/album/1-okc/">Radiohead - OK Computer</a></li></ol>
+    <div class="listSummaryRow">
+      <div class="listSummaryRank">1</div>
+      <h2 class="albumTitle listSummary"><a href="/album/1-okc/">OK Computer</a></h2>
+      <h3 class="artistTitle listSummary"><a href="/artist/1-radiohead/">Radiohead</a></h3>
+      <div class="summaryPoints"><a href="#">500 Points</a></div>
+      <div class="pointsTable"><div class="summaryPointsMisc"><div class="head">1st Place</div><div class="count">10</div></div></div>
+    </div>
+    <div class="listSummaryRow">
+      <div class="listSummaryRank song">1</div>
+      <h2 class="artistTitle listSummary song"><a href="/artist/1-radiohead/">Radiohead</a></h2>
+      <h3 class="albumTitle listSummary song"><a href="/song/1-creep/">Creep</a></h3>
+      <div class="pointsTable song"><div class="summaryPointsMisc"><div class="head">Points</div><div class="count">50</div></div></div>
+    </div>
   </body>
   </html>
 `;
@@ -95,6 +111,30 @@ describe("End-to-End API Smoke Tests for all 84+ endpoints", () => {
       }
       if (urlStr.includes("moreStatsAlbum.php")) {
         return new Response("favorites: 100\nlikes: 200\nlistens: 300\nlibrary: 400\nlists: 500", { status: 200 });
+      }
+      if (urlStr.includes("getGenreName.php")) {
+        return new Response("Rock", { status: 200 });
+      }
+      if (urlStr.includes("showImage.php")) {
+        return new Response('<div id="curImage"><img src="cover.jpg" /></div><div id="img_0" class="thumbnail selected"><img src="cover.jpg" alt="Cover" title="Cover" /></div>', { status: 200 });
+      }
+      if (urlStr.includes("showArtistRatings.php")) {
+        return new Response('<table><tr><td class="rank">1</td><td class="tableCover"><a href="/album/1/"><img src="c.jpg"></a></td><td class="albumInfo"><div class="largeTitle"><a href="/album/1/">Album</a></div></td><td class="tableRating"><div class="green-font">100</div></td></tr></table>', { status: 200 });
+      }
+      if (urlStr.includes("showMore.php")) {
+        return new Response('<div class="userBlock ten"><a href="/user/zed/"><img src="user.jpg" /></a><div class="userName"><a href="/user/zed/">Zed</a></div></div>', { status: 200 });
+      }
+      if (urlStr.includes("showUserTrackRatings.php")) {
+        return new Response('<div class="albumHeadline small"><h1 class="albumTitle"><a href="#">Radiohead - OK Computer</a></h1></div><table><tr><td class="trackNumber">1</td><td class="trackTitle"><a href="/song/1/">Airbag</a></td><td class="trackRating">100</td></tr></table>', { status: 200 });
+      }
+      if (urlStr.includes("viewAllComments.php")) {
+        return new Response('<div id="reply1" class="commentRow"><div class="commentUserName"><a href="#">Zed</a></div><div class="commentText">Cool</div></div>', { status: 200 });
+      }
+      if (urlStr.includes("sourceSelect.php")) {
+        return new Response('<div class="columns"><div><a href="/ratings/12-av-club/2026/1">AV Club</a></div></div>', { status: 200 });
+      }
+      if (urlStr.includes("genreSelect.php")) {
+        return new Response('<div id="results"><div class="columns"><div><a href="/genre/7-rock/2026/">Rock</a></div></div></div>', { status: 200 });
       }
       return new Response(sampleHtml, { status: 200 });
     });
@@ -215,6 +255,29 @@ describe("End-to-End API Smoke Tests for all 84+ endpoints", () => {
     { path: "/user/genres?username=zed", expectedProp: "genres" },
     { path: "/user/badges?username=zed", expectedProp: "badges" },
     { path: "/feed/news", expectedProp: "items" },
+    { path: "/list/summary?year=2024", expectedProp: "items" },
+    { path: "/year-end?year=2024", expectedProp: "items" },
+    { path: "/songs/best?year=2024", expectedProp: "songs" },
+    { path: "/user/year-end?username=zed&year=2024", expectedProp: "albums" },
+    { path: "/user/distribution?username=zed", expectedProp: "rows" },
+    { path: "/genre/name?id=7", expectedProp: "name" },
+    { path: "/user/artist-ratings?username=zed&artistId=1", expectedProp: "ratings" },
+    { path: "/album/likes?albumId=1", expectedProp: "users" },
+    { path: "/album/in-library?albumId=1", expectedProp: "users" },
+    { path: "/album/images?albumId=1", expectedProp: "images" },
+    { path: "/user/track-ratings?username=zed&albumId=1", expectedProp: "tracks" },
+    { path: "/comments?type=user_review&itemId=1", expectedProp: "comments" },
+    { path: "/album/corrections?albumId=1", expectedProp: "title" },
+    { path: "/artist/corrections?slug=1-radiohead", expectedProp: "title" },
+    { path: "/song/corrections?songId=1", expectedProp: "title" },
+    { path: "/releases/this-week/singles", expectedProp: "albums" },
+    { path: "/releases/decade?decade=2020s", expectedProp: "albums" },
+    { path: "/releases/month?month=september-09", expectedProp: "albums" },
+    { path: "/releases/week?week=36", expectedProp: "albums" },
+    { path: "/user/perfect?username=zed", expectedProp: "ratings" },
+    { path: "/critic/reviews?slug=1-rob", expectedProp: "name" },
+    { path: "/ratings/sources?year=2024", expectedProp: "sources" },
+    { path: "/ratings/genres?year=2024", expectedProp: "genres" },
   ];
 
   for (const { path, expectedProp } of endpoints) {

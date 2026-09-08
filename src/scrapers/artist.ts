@@ -130,6 +130,7 @@ export async function scrapeArtistTopSongs(url: string, opts: FetchOpts = FETCH_
 export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_OPTS): Promise<ArtistDetail> {
   const res = await fetch(pageUrl, opts);
   if (!res.ok) throw new Error(`Artist fetch failed: ${res.status}`);
+  const html = await res.text();
 
   const s = {
     name: "",
@@ -310,15 +311,9 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
         if (s.songCurrent) s.songCurrent.ratingCount = ((s.songCurrent.ratingCount ?? "") as string) + t.text;
       },
     })
-    .transform(res)
+    .transform(new Response(html))
     .arrayBuffer();
 
-  // Post-process detail rows: re-parse with a second pass is complex; instead
-  // re-derive memberOf/formerlyOf/genres from raw HTML via regex-free second fetch is wasteful.
-  // We captured links in order; classify using akaBuf suffixes per row is not retained.
-  // Simpler: fetch detail rows again with dedicated lightweight parse below.
-  const res2 = await fetch(pageUrl, opts);
-  const html = await res2.text();
   const rowMatches = [...html.matchAll(/<div class="detailRow">(.*?)<\/div>/gs)].map((m) => m[1]);
   const members: Array<{ name: string; url: string }> = [];
   const formerMembers: Array<{ name: string; url: string }> = [];
@@ -380,7 +375,6 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
   }
 
   // Discography sections: scrape album blocks per section with a section-aware pass.
-  const res3 = await fetch(pageUrl, opts);
   const sections: DiscographySection[] = [];
   let curSection: DiscographySection | null = null;
   let cur: Partial<import("../types.js").AlbumBlock> | null = null;
@@ -464,7 +458,7 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
         }
       },
     })
-    .transform(res3)
+    .transform(new Response(html))
     .arrayBuffer();
 
   for (const sec of sections) {

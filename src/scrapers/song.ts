@@ -1,5 +1,15 @@
 import { BASE, FETCH_OPTS, decodeEntities, type FetchOpts } from "../constants.js";
-import type { AotyComment, NamedLink, SongCredit, SongDetail, SongRating, TopSong } from "../types.js";
+import type {
+  AotyComment,
+  NamedLink,
+  SongCredit,
+  SongDetail,
+  SongRating,
+  SongTracklistItem,
+  SongsBestItem,
+  SongsBestResult,
+  TopSong,
+} from "../types.js";
 
 export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OPTS): Promise<SongDetail> {
   const res = await fetch(pageUrl, opts);
@@ -116,10 +126,7 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
     if (parsed.length) s.credits = parsed;
   }
   // Top user ratings (first page of the song ratings)
-  {
-    const rres = await fetch(pageUrl, opts);
-    if (rres.ok) s.topRatings = await scrapeSongRatingRows(rres);
-  }
+  s.topRatings = await scrapeSongRatingRows(new Response(html));
 
   const ratingDistribution: Array<{ label: string; count: number }> = [];
   for (const row of html.matchAll(/<tr class="distRow">([\s\S]*?)<\/tr>/g)) {
@@ -134,6 +141,33 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
         label,
         count: countStr ? parseInt(countStr, 10) || 0 : 0,
       });
+    }
+  }
+
+  const likePctM = html.match(/<strong[^>]*>(\d+%)<\/strong>\s*of users like this song/i);
+  const dislikePctM = html.match(/<strong[^>]*>(\d+%)<\/strong>\s*of users don't like this song/i);
+  const likePercentage = likePctM?.[1] ?? null;
+  const dislikePercentage = dislikePctM?.[1] ?? null;
+
+  const tracklist: SongTracklistItem[] = [];
+  const tracklistTableM = html.match(/class="trackListTable"[\s\S]*?<\/table>/i) ?? html.match(/Track List[\s\S]*?<table[^>]*>([\s\S]*?)<\/table>/i);
+  if (tracklistTableM) {
+    for (const tr of tracklistTableM[0].matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
+      const row = tr[1];
+      if (!row) continue;
+      const numM = row.match(/class="[^"]*trackNumber[^"]*"[^>]*>([^<]+)<\/td>|<td[^>]*>(\d+)<\/td>/);
+      const titleM = row.match(/<a href="([^"]*\/song\/[^"]*)">([^<]+)<\/a>/);
+      const lenM = row.match(/class="[^"]*length[^"]*"[^>]*>([^<]+)<\/td>|<td[^>]*>(\d+:\d+)<\/td>/);
+      const scoreM = row.match(/class="[^"]*trackRating[^"]*"[^>]*>([^<]+)<\/td>|<div class="trackRating[^"]*">([^<]+)<\/div>/);
+      if (titleM?.[1] && titleM[2]) {
+        tracklist.push({
+          number: (numM?.[1] ?? numM?.[2] ?? "").trim(),
+          title: decodeEntities(titleM[2].trim()),
+          url: titleM[1].startsWith("http") ? titleM[1] : BASE + titleM[1],
+          length: (lenM?.[1] ?? lenM?.[2] ?? "").trim(),
+          score: (scoreM?.[1] ?? scoreM?.[2] ?? "").trim() || null,
+        });
+      }
     }
   }
 
@@ -191,6 +225,9 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
     userScoreExact: s.userScoreExact || null,
     ratingCount: num(s.ratingCount),
     ratingDistribution,
+    likePercentage,
+    dislikePercentage,
+    tracklist,
     tags,
     credits: s.credits.filter((c) => c.artists.length > 0),
     topRatings: s.topRatings,
@@ -342,3 +379,69 @@ export async function scrapeTopSongs(period: string, page: number, opts: FetchOp
       })),
   };
 }
+
+export async function scrapeBestSongsYearEnd(
+  year: number,
+  sort = "points",
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<SongsBestResult> {
+  const url = sort === "lists" ? `${BASE}/songs/best/${year}/sort-by/lists/` : `${BASE}/songs/best/${year}/`;
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`Best songs fetch failed: ${res.status}`);
+  const html = await res.text();
+  const songs: SongsBestItem[] = [];
+  const rows = [...html.matchAll(/<div class="listSummaryRow">([\s\S]*?)(?=<div class="listSummaryRow"|<div id="comments"|<div class="footer"|$)/g)];
+
+  for (const match of rows) {
+    const r = match[1];
+    if (!r) continue;
+
+    const rankM = r.match(/<div class="listSummaryRank[^"]*">(\d+)<\/div>/);
+    const rank = rankM?.[1] ? parseInt(rankM[1], 10) : 0;
+
+    const coverM = r.match(/<div class="listSummaryCover[^"]*">[\s\S]*?<img [^>]*src="([^"]+)"/);
+    const cover = coverM?.[1] ?? null;
+
+    const songM = r.match(/<h3 class="albumTitle listSummary song"><a [^>]*href="([^"]+)">([^<]+)<\/a><\/h3>/);
+    const songUrl = songM?.[1] ? (songM[1].startsWith("http") ? songM[1] : BASE + songM[1]) : "";
+    const title = songM?.[2] ? decodeEntities(songM[2].trim()) : "";
+
+    const artistBlockM = r.match(/<h2 class="artistTitle listSummary song">([\s\S]*?)<\/h2>/);
+    const artists: NamedLink[] = [];
+    if (artistBlockM?.[1]) {
+      for (const am of artistBlockM[1].matchAll(/<a [^>]*href="([^"]+)">([^<]+)<\/a>/g)) {
+        if (am[1] && am[2]) {
+          artists.push({
+            name: decodeEntities(am[2].trim()),
+            url: am[1].startsWith("http") ? am[1] : BASE + am[1],
+          });
+        }
+      }
+    }
+    const artist = artists.map((a) => a.name).join(", ");
+    const artistUrl = artists[0]?.url ?? "";
+
+    const listsM = r.match(/<div class="head"># Lists<\/div>\s*<div class="count">([\d,]+)<\/div>/);
+    const listsCount = listsM?.[1] ? parseInt(listsM[1].replace(/,/g, ""), 10) : 0;
+
+    const pointsM = r.match(/<div class="head">Points<\/div>\s*<div class="count">([\d,]+)<\/div>/);
+    const points = pointsM?.[1] ? parseInt(pointsM[1].replace(/,/g, ""), 10) : 0;
+
+    if (title || artist) {
+      songs.push({
+        rank,
+        artist,
+        artistUrl,
+        artists,
+        title,
+        url: songUrl,
+        cover,
+        points,
+        listsCount,
+      });
+    }
+  }
+
+  return { year, sort, songs };
+}
+

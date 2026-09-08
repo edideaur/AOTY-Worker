@@ -19,12 +19,19 @@ import {
   scrapeUsersCommunity,
   scrapeUserBadges,
   scrapeUserGenres,
+  scrapeUserYearEnd,
+  scrapeUserDistribution,
+  scrapeUserArtistRatings,
+  scrapeUserAlbumTrackRatings,
 } from "../src/scrapers/user.js";
 
 describe("user scrapers unit tests", () => {
   it("parses user profile correctly", async () => {
     const html = `
-      <h1 class="headline profile"><span>musicgeek</span></h1>
+      <h1 class="headline profile"><span style="color: #60C4A5;">Music Geek</span><div style="display:block; font-size: 12px; color: gray;">(musicgeek)</div></h1>
+      <button class="showImage" data-user-id="512173"></button>
+      <div>Member since January 27, 2025</div>
+      <a href="/year-end/musicgeek/2025/">2025</a>
       <div class="profileImage"><img src="https://cdn.aoty.org/avatar.jpg" /></div>
       <div class="profileLocation"><i class="fas fa-map-marker-alt"></i> Chicago, IL</div>
       <div class="aboutUser">Music obsessive and vinyl collector.</div>
@@ -35,6 +42,15 @@ describe("user scrapers unit tests", () => {
       <div class="profileStat">300</div><div class="profileStatName">Followers</div>
       <div class="profileStat">150</div><div class="profileStatName">Following</div>
       <div class="donorBanner">Subscriber</div>
+      <h2 class="sectionHeading">Pinned Review</h2>
+      <div class="albumReviewRow" id="review_99">
+        <div class="userReviewName"><a href="/user/musicgeek/">Music Geek</a></div>
+        <div class="rating">100</div>
+        <div class="albumReviewText user"><p>Pinned review text</p></div>
+        <div class="review_likes">50</div>
+        <div class="comment_count">10</div>
+        <div class="review_date">1w</div>
+      </div>
       <table class="dist">
         <tr class="distRow"><td class="distLabel"><a href="/user/musicgeek/ratings/perfect/">100</a></td><td class="distCount">15</td></tr>
         <tr class="distRow"><td class="distLabel">90 - 99</td><td class="distCount">80</td></tr>
@@ -48,6 +64,11 @@ describe("user scrapers unit tests", () => {
     try {
       const profile = await scrapeUserProfile("musicgeek");
       expect(profile.username).toBe("musicgeek");
+      expect(profile.displayName).toBe("Music Geek");
+      expect(profile.userId).toBe("512173");
+      expect(profile.memberSince).toBe("January 27, 2025");
+      expect(profile.yearEndLists).toEqual([2025]);
+      expect(profile.pinnedReview?.rating).toBe("100");
       expect(profile.avatar).toBe("https://cdn.aoty.org/avatar.jpg");
       expect(profile.bio).toBe("Music obsessive and vinyl collector.");
       expect(profile.location).toBe("Chicago, IL");
@@ -295,7 +316,15 @@ describe("user scrapers unit tests", () => {
       <div class="userReviewScoreBox"><div class="albumCriticScore">95</div></div>
       <div class="userReviewText">Deeply moving soundscapes.</div>
       <div class="review_likes">42</div>
+      <div class="comment_count">7</div>
       <div class="reviewDate"><span title="2024-05-01">May 1, 2024</span></div>
+      <div class="albumListLinks"><a href="https://spotify.com/123"><div>Spotify</div></a></div>
+      « <a href="/user/musicgeek/album/99-prev/" title="Previous Album"><img src="https://cdn.aoty.org/p.jpg" /></a>
+      » <a href="/user/musicgeek/album/101-next/" title="Next Album"><img src="https://cdn.aoty.org/n.jpg" /></a>
+      <div class="commentRow" id="comment_1">
+        <div class="commentUserName"><a href="/user/commenter/">Commenter</a></div>
+        <div class="commentText">Nice review!</div>
+      </div>
       <table class="trackListTable">
         <tr>
           <td class="trackNumber">1</td>
@@ -314,11 +343,18 @@ describe("user scrapers unit tests", () => {
       expect(detail.rating).toBe("95");
       expect(detail.text).toBe("Deeply moving soundscapes.");
       expect(detail.likes).toBe("42");
+      expect(detail.comments).toBe("7");
       expect(detail.date).toBe("2024-05-01");
       expect(detail.albumId).toBe("100");
       expect(detail.trackRatings.length).toBe(1);
       expect(detail.trackRatings[0].title).toBe("Intro");
       expect(detail.trackRatings[0].rating).toBe("90");
+      expect(detail.streamingLinks?.length).toBe(1);
+      expect(detail.streamingLinks?.[0]?.platform).toBe("Spotify");
+      expect(detail.previousReview?.title).toBe("Previous Album");
+      expect(detail.nextReview?.title).toBe("Next Album");
+      expect(detail.commentsList?.length).toBe(1);
+      expect(detail.commentsList?.[0]?.username).toBe("Commenter");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -459,6 +495,156 @@ describe("user scrapers unit tests", () => {
     const restore = mockFetch(async () => new Response("Error", { status: 500 }));
     try {
       expect(scrapeUserBadges("musicgeek")).rejects.toThrow("User badges fetch failed: 500");
+    } finally {
+      restore();
+    }
+  });
+
+  it("parses user year-end list correctly", async () => {
+    const html = `
+      <div class="userName"><a title="musicgeek">Music Geek</a></div>
+      <div class="userImage"><a href="/user/musicgeek/"><img src="https://cdn.aoty.org/avatar.jpg" /></a></div>
+      <div class="yearEnd block" data-album-index="0"><img src="https://cdn.aoty.org/addison.jpg" /></div>
+      <ol class="ranked">
+        <li data-album-index="0"><a href="/album/1284540-addison.php">Addison Rae - Addison</a></li>
+      </ol>
+      <section class="fullWidth paddingBottom moreInfo">
+        <div><span class="category">genres</span> / dance-pop, electropop</div>
+        <div><span class="category">secondaries</span> / alt-pop, synthpop</div>
+        <div><span class="category">descriptors</span> / energetic, party</div>
+      </section>
+    `;
+
+    const restore = mockFetch(async () => new Response(html, { status: 200 }));
+    try {
+      const res = await scrapeUserYearEnd("musicgeek", 2025);
+      expect(res.username).toBe("musicgeek");
+      expect(res.displayName).toBe("Music Geek");
+      expect(res.avatar).toBe("https://cdn.aoty.org/avatar.jpg");
+      expect(res.year).toBe(2025);
+      expect(res.albums.length).toBe(1);
+      expect(res.albums[0]?.rank).toBe(1);
+      expect(res.albums[0]?.artist).toBe("Addison Rae");
+      expect(res.albums[0]?.album).toBe("Addison");
+      expect(res.albums[0]?.cover).toBe("https://cdn.aoty.org/addison.jpg");
+      expect(res.genres).toEqual(["dance-pop", "electropop"]);
+      expect(res.secondaries).toEqual(["alt-pop", "synthpop"]);
+      expect(res.descriptors).toEqual(["energetic", "party"]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("parses user distribution correctly", async () => {
+    const html = `
+      <table class="dist">
+        <tr class="distRow"><td class="distLabel">100</td><td class="distCount">20</td><td class="max"><div class="distBar" style="width:50%;"></div></td></tr>
+        <tr class="distRow"><td class="distLabel">90 - 99</td><td class="distCount">40</td><td class="max"><div class="distBar" style="width:100%;"></div></td></tr>
+      </table>
+    `;
+
+    let calledBody = "";
+    const restore = mockFetch(async (_input, init) => {
+      calledBody = String(init?.body ?? "");
+      return new Response(html, { status: 200 });
+    });
+    try {
+      const res = await scrapeUserDistribution("512173", "singles");
+      expect(res.username).toBe("512173");
+      expect(res.format).toBe("singles");
+      expect(calledBody).toContain("itemID=512173");
+      expect(calledBody).toContain("format=singles");
+      expect(res.rows.length).toBe(2);
+      expect(res.rows[0]?.label).toBe("100");
+      expect(res.rows[0]?.count).toBe(20);
+      expect(res.rows[0]?.percentage).toBe("50%");
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles user ratings with year and genre parameters", async () => {
+    const html = `<div class="albumBlock" data-type="LP"><div class="artistTitle">Artist</div><div class="albumTitle">Album</div><div class="ratingRow"><div class="rating">90</div></div></div>`;
+    let requestedUrl = "";
+    const restore = mockFetch(async (input) => {
+      requestedUrl = String(input);
+      return new Response(html, { status: 200 });
+    });
+    try {
+      await scrapeUserRatings("musicgeek", undefined, { year: "2026", genreId: "7", sort: "perfect" });
+      expect(requestedUrl).toContain("/user/musicgeek/ratings/perfect/");
+      expect(requestedUrl).toContain("y=2026");
+      expect(requestedUrl).toContain("genreID=7");
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles scrapeUserArtistRatings correctly", async () => {
+    const html = `
+      <div class="content"><div class="inner"><div id="listEdit"><table>
+        <tr>
+          <td class="rank">1</td>
+          <td class="tableCover"><a href="/album/887267-brat.php"><img src="brat.jpg"></a></td>
+          <td class="albumInfo"><div class="largeTitle"><a href="/album/887267-brat.php">BRAT</a></div><div style="color: gray; font-size: .9em;">2024</div></td>
+          <td class="tableRating"><div class="green-font">100</div></td>
+          <td class="tableRating"><a href="/user/musicgeek/album/887267-brat/">Review</a></td>
+        </tr>
+      </table></div></div></div>
+    `;
+    let calledBody = "";
+    const restore = mockFetch(async (_input, init) => {
+      calledBody = String(init?.body ?? "");
+      return new Response(html, { status: 200 });
+    });
+    try {
+      const res = await scrapeUserArtistRatings("512173", "2255");
+      expect(res.username).toBe("512173");
+      expect(res.artistId).toBe("2255");
+      expect(calledBody).toContain("userID=512173");
+      expect(calledBody).toContain("artistID=2255");
+      expect(res.ratings.length).toBe(1);
+      expect(res.ratings[0]?.rank).toBe(1);
+      expect(res.ratings[0]?.album).toBe("BRAT");
+      expect(res.ratings[0]?.year).toBe("2024");
+      expect(res.ratings[0]?.score).toBe("100");
+      expect(res.ratings[0]?.reviewUrl).toContain("/user/musicgeek/album/887267-brat/");
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles scrapeUserAlbumTrackRatings correctly", async () => {
+    const html = `
+      <div class="albumHeadline small"><h1 class="albumTitle"><a href="/album/1-luck.php">Hilary Duff - luck… or something</a></h1></div>
+      <div class="albumHeaderCover"><img src="https://cdn.aoty.org/c.jpg" /></div>
+      <table class="trackListTable">
+        <tr>
+          <td class="trackNumber">1</td>
+          <td class="trackTitle"><a href="/song/10-tennis/">Weather for Tennis</a><div class="length">3:16</div></td>
+          <td class="trackRating"><span class="green-font">100</span></td>
+        </tr>
+      </table>
+    `;
+    let calledBody = "";
+    const restore = mockFetch(async (_input, init) => {
+      calledBody = String(init?.body ?? "");
+      return new Response(html, { status: 200 });
+    });
+    try {
+      const res = await scrapeUserAlbumTrackRatings("512173", "1535377");
+      expect(res.username).toBe("512173");
+      expect(res.albumId).toBe("1535377");
+      expect(res.artist).toBe("Hilary Duff");
+      expect(res.album).toBe("luck… or something");
+      expect(res.cover).toBe("https://cdn.aoty.org/c.jpg");
+      expect(calledBody).toContain("albumID=1535377");
+      expect(calledBody).toContain("userID=512173");
+      expect(res.tracks.length).toBe(1);
+      expect(res.tracks[0]?.number).toBe("1");
+      expect(res.tracks[0]?.title).toBe("Weather for Tennis");
+      expect(res.tracks[0]?.length).toBe("3:16");
+      expect(res.tracks[0]?.score).toBe("100");
     } finally {
       restore();
     }

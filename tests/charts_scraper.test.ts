@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { scrapeRatingsChart, scrapeTopArtists } from "../src/scrapers/charts.js";
+import { scrapeRatingsChart, scrapeTopArtists, scrapeRatingSources, scrapeRatingGenres } from "../src/scrapers/charts.js";
 import { mockFetch } from "./test_utils.js";
 
 describe("scrapeRatingsChart unit test", () => {
@@ -59,6 +59,48 @@ describe("scrapeTopArtists unit test", () => {
 
       const userArtists = await scrapeTopArtists("rock", "users", undefined, 2);
       expect(userArtists.length).toBe(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("parses rating sources from sourceSelect.php correctly", async () => {
+    const html = `
+      <div class="columns">
+        <div><a href="/ratings/12-av-club-highest-rated/2026/1">A.V. Club</a></div>
+        <div><a href="/ratings/8-all-music-highest-rated/2026/1">AllMusic</a></div>
+      </div>
+    `;
+    const restore = mockFetch(async () => new Response(html, { status: 200 }));
+    try {
+      const res = await scrapeRatingSources("2026");
+      expect(res.year).toBe("2026");
+      expect(res.sources.length).toBe(2);
+      expect(res.sources[0]?.name).toBe("A.V. Club");
+      expect(res.sources[0]?.slug).toBe("12-av-club-highest-rated");
+      expect(res.sources[0]?.url).toContain("/ratings/12-av-club-highest-rated/2026/1");
+      expect(res.sources[1]?.name).toBe("AllMusic");
+    } finally {
+      restore();
+    }
+  });
+
+  it("parses rating genres from genreSelect.php correctly", async () => {
+    const html = `
+      <div id="results"><div class="columns">
+        <div><a href="/genre/441-alt-pop/2026/">Alt-Pop</a></div>
+        <div><a href="/genre/7-rock/2026/">Rock</a></div>
+      </div></div>
+    `;
+    const restore = mockFetch(async () => new Response(html, { status: 200 }));
+    try {
+      const res = await scrapeRatingGenres("2026");
+      expect(res.year).toBe("2026");
+      expect(res.genres.length).toBe(2);
+      expect(res.genres[0]?.id).toBe("441");
+      expect(res.genres[0]?.slug).toBe("441-alt-pop");
+      expect(res.genres[0]?.name).toBe("Alt-Pop");
+      expect(res.genres[1]?.name).toBe("Rock");
     } finally {
       restore();
     }
