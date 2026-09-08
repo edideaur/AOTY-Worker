@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { decodeEntities, cleanImageUrl, RES_HEADERS, PROBLEM_HEADERS } from "../src/constants.js";
+import { decodeEntities, deepDecodeEntities, cleanImageUrl, RES_HEADERS, PROBLEM_HEADERS } from "../src/constants.js";
 import { sanitizeImageUrls } from "../src/index.js";
 import { openApiSpec } from "../src/openapi.js";
 import { POSTMAN_BODY } from "../src/postman.js";
@@ -48,12 +48,40 @@ describe("decodeEntities", () => {
     expect(decodeEntities("&ouml;")).toBe("\u00F6");
     expect(decodeEntities("&aring;")).toBe("\u00E5");
     expect(decodeEntities("&ccedil;")).toBe("\u00E7");
+    expect(decodeEntities("lucy mir&oacute; al mundo y not&oacute; que est&aacute; girando")).toBe("lucy miró al mundo y notó que está girando");
+  });
+
+  it("decodes extended Latin and symbol entities", () => {
+    expect(decodeEntities("&scaron; &Scaron; &zcaron; &Zcaron;")).toBe("š Š ž Ž");
+    expect(decodeEntities("&ccaron; &Ccaron; &lstrok; &Lstrok;")).toBe("č Č ł Ł");
+    expect(decodeEntities("&aogon; &eogon; &cacute; &sacute;")).toBe("ą ę ć ś");
+    expect(decodeEntities("&abreve; &scedil; &tcedil; &odblac; &udblac;")).toBe("ă ş ţ ő ű");
   });
 
   it("handles double-escaped entities", () => {
     expect(decodeEntities("&amp;amp;")).toBe("&");
     expect(decodeEntities("&amp;quot;")).toBe('"');
     expect(decodeEntities("&amp;ldquo;")).toBe("\u201C");
+    expect(decodeEntities("&amp;oacute;")).toBe("ó");
+  });
+
+  it("deepDecodeEntities decodes nested objects and arrays", () => {
+    const data = {
+      title: "lucy mir&oacute; al mundo y not&oacute; que est&aacute; girando",
+      tracks: [
+        { name: "Track &amp; Title", artists: ["AKRIILA &amp; Co."] },
+      ],
+      score: 84,
+      nested: {
+        quote: "&ldquo;Great Album&rdquo;",
+      },
+    };
+    const decoded = deepDecodeEntities(data);
+    expect(decoded.title).toBe("lucy miró al mundo y notó que está girando");
+    expect(decoded.tracks[0]?.name).toBe("Track & Title");
+    expect(decoded.tracks[0]?.artists[0]).toBe("AKRIILA & Co.");
+    expect(decoded.nested.quote).toBe("“Great Album”");
+    expect(decoded.score).toBe(84);
   });
 
   it("leaves normal strings unchanged", () => {

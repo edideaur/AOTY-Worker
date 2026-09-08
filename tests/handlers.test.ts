@@ -156,6 +156,62 @@ describe("Query parameter routing & response shapes", () => {
     }
   });
 
+  it("decodes HTML entities in /must-hear both on fresh scrape and on cache hit", async () => {
+    const rawAlbumHtml = `
+      <div class="albumBlock" data-type="">
+        <div class="image mustHear">
+          <a href="/album/1785197-akriila-lucy-miro-al-mundo-y-noto-que-esta-girando.php">
+            <div class="mustHear"></div>
+            <img src="https://cdn2.albumoftheyear.org/200x0/album/1785197-lucy-miro-al-mundo-y-noto-que-esta-girando_200643.jpg" />
+          </a>
+        </div>
+        <div class="artistTitle">AKRIILA</div>
+        <div class="albumTitle">lucy mir&oacute; al mundo y not&oacute; que est&aacute; girando</div>
+        <div class="type">2026</div>
+        <div class="ratingRow">
+          <div class="ratingBlock"><div class="rating">84</div></div>
+          <div class="ratingText">user score</div>
+          <div class="ratingText">(1,717)</div>
+        </div>
+      </div>
+    `;
+    const restore = mockFetch(async () => new Response(rawAlbumHtml, { status: 200 }));
+
+    try {
+      // 1. Fresh scrape decodes entities
+      const freshEnv = createMockEnv();
+      const resFresh = await worker.fetch(req("/must-hear?year=2026&cache=false"), freshEnv);
+      expect(resFresh.status).toBe(200);
+      const jsonFresh = (await resFresh.json()) as { albums: Array<{ title: string; artist: string }> };
+      expect(jsonFresh.albums[0]?.title).toBe("lucy miró al mundo y notó que está girando");
+      expect(jsonFresh.albums[0]?.artist).toBe("AKRIILA");
+
+      // 2. Cache HIT with stale/un-decoded entities in KV is sanitized on return
+      const staleCached = JSON.stringify({
+        year: "2026",
+        page: 1,
+        albums: [
+          {
+            url: "https://www.albumoftheyear.org/album/1785197-akriila-lucy-miro-al-mundo-y-noto-que-esta-girando.php",
+            artist: "AKRIILA",
+            title: "lucy mir&oacute; al mundo y not&oacute; que est&aacute; girando",
+            mustHear: true,
+          },
+        ],
+      });
+      const cachedEnv = createMockEnv({
+        "/must-hear?year=2026": staleCached,
+      });
+      const resCached = await worker.fetch(req("/must-hear?year=2026"), cachedEnv);
+      expect(resCached.status).toBe(200);
+      expect(resCached.headers.get("X-Cache")).toBe("HIT");
+      const jsonCached = (await resCached.json()) as { albums: Array<{ title: string }> };
+      expect(jsonCached.albums[0]?.title).toBe("lucy miró al mundo y notó que está girando");
+    } finally {
+      restore();
+    }
+  });
+
   it("handles /news and /lists with query filters", async () => {
     const newsHtml = `<div class="mediaContainer" id="link1"><div class="content"><div class="title"><a href="/l/1/">News</a></div></div></div>`;
     const listHtml = `<div class="listColumn"><div class="listPub"><a href="/list/1/">List</a></div></div>`;

@@ -94,7 +94,7 @@ export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
   for (const a of albums) {
     a.artist = decodeEntities(a.artist.trim());
     a.title = decodeEntities(a.title.trim());
-    a.releaseDate = a.releaseDate.trim();
+    a.releaseDate = decodeEntities(a.releaseDate.trim());
     a.cover = cleanImageUrl(a.cover.trim());
   }
   return albums;

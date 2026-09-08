@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, FETCH_OPTS_FRESH, RES_HEADERS, PROBLEM_HEADERS, cleanImageUrl, type FetchOpts } from "./constants.js";
+import { BASE, FETCH_OPTS, FETCH_OPTS_FRESH, RES_HEADERS, PROBLEM_HEADERS, cleanImageUrl, deepDecodeEntities, type FetchOpts } from "./constants.js";
 import { openApiSpec } from "./openapi.js";
 import { POSTMAN_BODY } from "./postman.js";
 import { scrapeAlbumBlocks } from "./scrapers/albumBlock.js";
@@ -1105,8 +1105,17 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeBestSongsYearEnd(year, sort, opts);
   }
 
-  if (path === "/user") {
-    return scrapeUserProfile(getRequiredParam(q, "username"), opts);
+  let rawUserSlug = q.get("username");
+  if (!rawUserSlug) {
+    const m = path.match(/^\/user\/([^/]+)$/);
+    if (m?.[1] && !RESERVED_USER_SUBPATHS.has(m[1])) {
+      rawUserSlug = m[1];
+    }
+  }
+
+  if (path === "/user" || (() => { const m = path.match(/^\/user\/([^/]+)$/); return !!m?.[1] && !RESERVED_USER_SUBPATHS.has(m[1]); })()) {
+    const username = rawUserSlug ?? getRequiredParam(q, "username");
+    return scrapeUserProfile(username, opts);
   }
 
   if (path === "/user/ratings") {
@@ -1759,8 +1768,16 @@ if (path === "/rapidoc") return htmlPage(RAPIDOC_HTML);
     const cacheKey = buildCacheKey(url);
 
     if (!skipCache && !noStore) {
-      const cached = await env.aoty_cache.get(cacheKey);
+      let cached = await env.aoty_cache.get(cacheKey);
       if (cached !== null) {
+        if (cached.includes("&")) {
+          try {
+            const parsed = JSON.parse(cached);
+            cached = JSON.stringify(deepDecodeEntities(parsed));
+          } catch {
+            // keep raw cached if parse fails
+          }
+        }
         const ttl = computeTtl(path, q, null);
         const cc = ttl ? `public, max-age=${ttl}` : "public";
         const etag = computeEtag(cached);
@@ -1771,7 +1788,7 @@ if (path === "/rapidoc") return htmlPage(RAPIDOC_HTML);
     try {
       const t0 = Date.now();
       const rawData = await route(path, q, fetchOpts);
-      const data = sanitizeImageUrls(rawData);
+      const data = deepDecodeEntities(sanitizeImageUrls(rawData));
       const dur = Date.now() - t0;
       const body = JSON.stringify(data);
       const ttl = computeTtl(path, q, data);

@@ -255,6 +255,114 @@ const NAMED_ENTITIES: Record<string, string> = {
   exist: "\u2203",
   empty: "\u2205",
   nabla: "\u2207",
+  // Latin Extended (Caron / Hacek)
+  scaron: "\u0161",
+  Scaron: "\u0160",
+  zcaron: "\u017E",
+  Zcaron: "\u017D",
+  ccaron: "\u010D",
+  Ccaron: "\u010C",
+  rcaron: "\u0159",
+  Rcaron: "\u0158",
+  dcaron: "\u010F",
+  Dcaron: "\u010E",
+  tcaron: "\u0165",
+  Tcaron: "\u0164",
+  ecaron: "\u011B",
+  Ecaron: "\u011A",
+  ncaron: "\u0148",
+  Ncaron: "\u0147",
+  lcaron: "\u013E",
+  Lcaron: "\u013D",
+  // Latin Extended (Stroke)
+  lstrok: "\u0142",
+  Lstrok: "\u0141",
+  dstrok: "\u0111",
+  Dstrok: "\u0110",
+  hstrok: "\u0127",
+  Hstrok: "\u0126",
+  // Latin Extended (Acute)
+  cacute: "\u0107",
+  Cacute: "\u0106",
+  sacute: "\u015B",
+  Sacute: "\u015A",
+  zacute: "\u017A",
+  Zacute: "\u0179",
+  nacute: "\u0144",
+  Nacute: "\u0143",
+  racute: "\u0155",
+  Racute: "\u0154",
+  lacute: "\u013A",
+  Lacute: "\u0139",
+  // Latin Extended (Dot)
+  zdot: "\u017C",
+  Zdot: "\u017B",
+  Idot: "\u0130",
+  inodot: "\u0131",
+  // Latin Extended (Ogonek)
+  aogon: "\u0105",
+  Aogon: "\u0104",
+  eogon: "\u0119",
+  Eogon: "\u0118",
+  iogon: "\u012F",
+  Iogon: "\u012E",
+  uogon: "\u0173",
+  Uogon: "\u0172",
+  // Latin Extended (Breve)
+  abreve: "\u0103",
+  Abreve: "\u0102",
+  gbreve: "\u011F",
+  Gbreve: "\u011E",
+  // Latin Extended (Cedilla)
+  scedil: "\u015F",
+  Scedil: "\u015E",
+  tcedil: "\u0163",
+  Tcedil: "\u0162",
+  kcedil: "\u0137",
+  Kcedil: "\u0136",
+  lcedil: "\u013C",
+  Lcedil: "\u013B",
+  ncedil: "\u0146",
+  Ncedil: "\u0145",
+  rcedil: "\u0157",
+  Rcedil: "\u0156",
+  // Latin Extended (Double Acute)
+  odblac: "\u0151",
+  Odblac: "\u0150",
+  udblac: "\u0171",
+  Udblac: "\u0170",
+  // Latin Extended (Ring)
+  uring: "\u016F",
+  Uring: "\u016E",
+  // Latin Extended (Macron)
+  amacr: "\u0101",
+  Amacr: "\u0100",
+  emacr: "\u0113",
+  Emacr: "\u0112",
+  imacr: "\u012B",
+  Imacr: "\u012A",
+  omacr: "\u014D",
+  Omacr: "\u014C",
+  umacr: "\u016B",
+  Umacr: "\u016A",
+  // Latin Extended (Circumflex & Ligature)
+  wcirc: "\u0175",
+  Wcirc: "\u0174",
+  ycirc: "\u0177",
+  Ycirc: "\u0176",
+  ijlig: "\u0133",
+  IJlig: "\u0132",
+  eng: "\u014B",
+  ENG: "\u014A",
+  // Symbols & Punctuation
+  fnof: "\u0192",
+  prime: "\u2032",
+  Prime: "\u2033",
+  oline: "\u203E",
+  hyphen: "\u2010",
+  dash: "\u2010",
+  star: "\u2606",
+  starf: "\u2605",
 };
 
 export function decodeEntities(str: string): string {
@@ -282,6 +390,19 @@ export function decodeEntities(str: string): string {
     str = next;
   }
   return str;
+}
+
+export function deepDecodeEntities<T>(val: T): T {
+  if (typeof val === "string") return decodeEntities(val) as T;
+  if (Array.isArray(val)) return val.map(deepDecodeEntities) as T;
+  if (val !== null && typeof val === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(val)) {
+      out[k] = deepDecodeEntities(v);
+    }
+    return out as T;
+  }
+  return val;
 }
 
 export function cleanImageUrl<T extends string | null | undefined>(url: T): T {
