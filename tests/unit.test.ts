@@ -38,6 +38,18 @@ describe("decodeEntities", () => {
     expect(decodeEntities("&eacute;")).toBe("\u00E9");
   });
 
+  it("decodes Latin-1 entities", () => {
+    expect(decodeEntities("&oacute;")).toBe("\u00F3");
+    expect(decodeEntities("&aacute;")).toBe("\u00E1");
+    expect(decodeEntities("&iacute;")).toBe("\u00ED");
+    expect(decodeEntities("&uacute;")).toBe("\u00FA");
+    expect(decodeEntities("&ntilde;")).toBe("\u00F1");
+    expect(decodeEntities("&auml;")).toBe("\u00E4");
+    expect(decodeEntities("&ouml;")).toBe("\u00F6");
+    expect(decodeEntities("&aring;")).toBe("\u00E5");
+    expect(decodeEntities("&ccedil;")).toBe("\u00E7");
+  });
+
   it("handles double-escaped entities", () => {
     expect(decodeEntities("&amp;amp;")).toBe("&");
     expect(decodeEntities("&amp;quot;")).toBe('"');
