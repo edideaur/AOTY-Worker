@@ -72,6 +72,13 @@ export const openApiSpec = {
             in: "query",
             schema: { type: "integer", default: 1, minimum: 1 },
           },
+          {
+            name: "type",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Filter releases by format/type (e.g. lp, ep, single, live, mixtape, compilation, etc.)",
+          },
         ],
         responses: {
           "200": {
@@ -82,6 +89,7 @@ export const openApiSpec = {
                   type: "object",
                   properties: {
                     page: { type: "integer" },
+                    type: { type: ["string", "null"] },
                     albums: { type: "array", items: { $ref: "#/components/schemas/AlbumBlock" } },
                   },
                 },
@@ -872,6 +880,64 @@ export const openApiSpec = {
         },
       },
     },
+    "/artist/discography": {
+      get: {
+        summary: "Get artist discography sections",
+        description: "Return only the discography sections (albums, EPs, singles, etc.) for an artist, with optional release type filtering and sorting.",
+        operationId: "getArtistDiscography",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          {
+            name: "slug",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "AOTY artist slug (e.g. '30-radiohead')",
+            example: "30-radiohead",
+          },
+          {
+            name: "type",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Filter discography by release type (lp, ep, single, mixtape, ...)",
+          },
+          {
+            name: "sort",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["critic", "user", "popular"] },
+            description: "Sort discography (works best with type=featured)",
+          },
+          {
+            name: "page",
+            in: "query",
+            schema: { type: "integer", default: 1, minimum: 1 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Artist discography sections",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    slug: { type: "string" },
+                    type: { type: ["string", "null"] },
+                    sort: { type: ["string", "null"] },
+                    page: { type: "integer" },
+                    sections: { type: "array", items: { $ref: "#/components/schemas/DiscographySection" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
     "/artist/similar": {
       get: {
         summary: "Get similar artists",
@@ -945,6 +1011,34 @@ export const openApiSpec = {
           "200": {
             description: "Label details",
             content: { "application/json": { schema: { $ref: "#/components/schemas/LabelDetail" } } },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/genres/autocomplete": {
+      get: {
+        summary: "Autocomplete suggestions for musical genres",
+        operationId: "getGenreAutocomplete",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "q", in: "query", required: true, schema: { type: "string" }, description: "Genre query prefix", example: "rock" },
+        ],
+        responses: {
+          "200": {
+            description: "Genre autocomplete suggestions",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    query: { type: "string" },
+                    suggestions: { type: "array", items: { $ref: "#/components/schemas/GenreAutocompleteItem" } },
+                  },
+                },
+              },
+            },
           },
           "400": { $ref: "#/components/responses/BadRequest" },
           "500": { $ref: "#/components/responses/ServerError" },
@@ -1819,6 +1913,86 @@ export const openApiSpec = {
         },
       },
     },
+    "/user/stats": {
+      get: {
+        summary: "User overview statistics",
+        description: "Get user rating counts, review counts, list counts, follower counts, and score distribution.",
+        operationId: "getUserStats",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "username", in: "query", required: true, schema: { type: "string" }, example: "rob" },
+        ],
+        responses: {
+          "200": {
+            description: "User statistics",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    username: { type: "string" },
+                    displayName: { type: "string" },
+                    memberSince: { type: ["string", "null"] },
+                    subscriber: { type: "boolean" },
+                    stats: {
+                      type: "object",
+                      properties: {
+                        ratings: { type: "string" },
+                        reviews: { type: "string" },
+                        lists: { type: "string" },
+                        followers: { type: "string" },
+                        following: { type: "string" },
+                      },
+                    },
+                    ratingDistribution: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          label: { type: "string" },
+                          count: { type: "integer" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/user/favorites": {
+      get: {
+        summary: "User favorite albums",
+        description: "Get favorite albums pinned to a user's profile.",
+        operationId: "getUserFavorites",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "username", in: "query", required: true, schema: { type: "string" }, example: "rob" },
+        ],
+        responses: {
+          "200": {
+            description: "User favorites",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    username: { type: "string" },
+                    favorites: { type: "array", items: { $ref: "#/components/schemas/AlbumBlock" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
     "/user/year-end": {
       get: {
         summary: "User's personal year-end album list",
@@ -2159,6 +2333,39 @@ export const openApiSpec = {
               },
             },
           },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/releases/year": {
+      get: {
+        summary: "Browse releases by year",
+        description: "Browse album releases in a given year, optionally filtered by genre and paginated.",
+        operationId: "getReleasesYear",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "year", in: "query", required: true, schema: { type: "string" }, description: "4-digit release year", example: "2024" },
+          { name: "genre", in: "query", required: false, schema: { type: "string" }, description: "Filter by genre slug" },
+          { name: "page", in: "query", schema: { type: "integer", default: 1, minimum: 1 } },
+        ],
+        responses: {
+          "200": {
+            description: "Year releases",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    year: { type: "string" },
+                    genre: { type: ["string", "null"] },
+                    page: { type: "integer" },
+                    albums: { type: "array", items: { $ref: "#/components/schemas/AlbumBlock" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
           "500": { $ref: "#/components/responses/ServerError" },
         },
       },
@@ -2659,6 +2866,28 @@ export const openApiSpec = {
         },
       },
     },
+    "/album/reviews": {
+      get: {
+        summary: "Album reviews (critic or user)",
+        description: "Get reviews for an album. Defaults to sorted critic reviews, or pass type=user for user reviews.",
+        operationId: "getAlbumReviews",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "slug", in: "query", required: true, schema: { type: "string" }, example: "1998-kanye-west-my-beautiful-dark-twisted-fantasy" },
+          { name: "type", in: "query", required: false, schema: { type: "string", enum: ["critic", "user"], default: "critic" } },
+          { name: "sort", in: "query", required: false, schema: { type: "string" }, description: "Sort order ('highest', 'lowest', 'newest', 'oldest' for critic; 'popular', 'recent', 'worst' for user)" },
+          { name: "page", in: "query", required: false, schema: { type: "integer", default: 1 } },
+        ],
+        responses: {
+          "200": {
+            description: "Album reviews",
+            content: { "application/json": { schema: { type: "object" } } },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
     "/album/tags": {
       get: {
         summary: "Complete tag list for an album",
@@ -2795,6 +3024,134 @@ export const openApiSpec = {
         },
       },
     },
+    "/album/credits": {
+      get: {
+        summary: "Album credits",
+        description: "Get performer, songwriter, and production credits for an album.",
+        operationId: "getAlbumCredits",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "albumId", in: "query", schema: { type: "string" }, description: "Numeric album ID", example: "2915" },
+          { name: "slug", in: "query", schema: { type: "string" }, description: "Album slug starting with ID", example: "2915-outkast-aquemini" },
+        ],
+        responses: {
+          "200": {
+            description: "Album credits",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    albumId: { type: "string" },
+                    credits: { oneOf: [{ type: "array", items: { $ref: "#/components/schemas/CreditSection" } }, { type: "null" }] },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/album/stats": {
+      get: {
+        summary: "Album community statistics",
+        description: "Get favorites, likes, listens, library count, and list appearances for an album.",
+        operationId: "getAlbumStats",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "albumId", in: "query", schema: { type: "string" }, description: "Numeric album ID", example: "2915" },
+          { name: "slug", in: "query", schema: { type: "string" }, description: "Album slug starting with ID", example: "2915-outkast-aquemini" },
+        ],
+        responses: {
+          "200": {
+            description: "Album statistics",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    albumId: { type: "string" },
+                    stats: { oneOf: [{ $ref: "#/components/schemas/AlbumStats" }, { type: "null" }] },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/album/tracklist": {
+      get: {
+        summary: "Album tracklist",
+        description: "Get only the tracklist with ratings, lengths, and features for an album.",
+        operationId: "getAlbumTracklist",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "slug", in: "query", schema: { type: "string" }, description: "Album ID or slug", example: "2915-outkast-aquemini" },
+          { name: "artist", in: "query", schema: { type: "string" }, example: "OutKast" },
+          { name: "name", in: "query", schema: { type: "string" }, example: "Aquemini" },
+        ],
+        responses: {
+          "200": {
+            description: "Album tracklist",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    slug: { type: ["string", "null"] },
+                    artist: { type: "string" },
+                    title: { type: "string" },
+                    url: { type: "string" },
+                    tracklist: { type: "array", items: { $ref: "#/components/schemas/Track" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/album/streaming": {
+      get: {
+        summary: "Album streaming links",
+        description: "Get streaming service links (Spotify, Apple Music, Tidal, Amazon, etc.) for an album.",
+        operationId: "getAlbumStreaming",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "slug", in: "query", schema: { type: "string" }, description: "Album ID or slug", example: "2915-outkast-aquemini" },
+          { name: "artist", in: "query", schema: { type: "string" }, example: "OutKast" },
+          { name: "name", in: "query", schema: { type: "string" }, example: "Aquemini" },
+        ],
+        responses: {
+          "200": {
+            description: "Album streaming links",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    slug: { type: ["string", "null"] },
+                    artist: { type: "string" },
+                    title: { type: "string" },
+                    url: { type: "string" },
+                    streamingLinks: { type: "array", items: { $ref: "#/components/schemas/StreamingLink" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
     "/album/likes": {
       get: {
         summary: "Users who liked an album",
@@ -2903,6 +3260,26 @@ export const openApiSpec = {
                 schema: { $ref: "#/components/schemas/EntityCorrectionsResult" },
               },
             },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/corrections": {
+      get: {
+        summary: "Submission and correction history for an entity",
+        description: "Get community edits and corrections for an album, artist, or song.",
+        operationId: "getEntityCorrections",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "type", in: "query", required: true, schema: { type: "string", enum: ["album", "artist", "song"] } },
+          { name: "id", in: "query", required: true, schema: { type: "string" }, description: "Numeric entity ID or slug starting with ID", example: "2915" },
+        ],
+        responses: {
+          "200": {
+            description: "Entity corrections history",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/EntityCorrectionsResult" } } },
           },
           "400": { $ref: "#/components/responses/BadRequest" },
           "500": { $ref: "#/components/responses/ServerError" },
@@ -3028,6 +3405,84 @@ export const openApiSpec = {
         },
       },
     },
+    "/random/genre": {
+      get: {
+        summary: "Get a random genre (never cached)",
+        description: "Returns a randomly chosen genre with sample albums. Never cached.",
+        operationId: "getRandomGenre",
+        responses: {
+          "200": {
+            description: "Random genre details",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    genre: { $ref: "#/components/schemas/GenreIndexItem" },
+                  },
+                },
+              },
+            },
+          },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/random/song": {
+      get: {
+        summary: "Get a random popular song (never cached)",
+        description: "Returns a randomly chosen song from community top tracks. Optionally filtered by period. Never cached.",
+        operationId: "getRandomSong",
+        parameters: [
+          { name: "period", in: "query", required: false, schema: { type: "string" }, description: "Period or year (e.g. 'all', '2024', '2020s')", example: "all" },
+        ],
+        responses: {
+          "200": {
+            description: "Random song details",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    period: { type: "string" },
+                    song: { $ref: "#/components/schemas/TopSong" },
+                  },
+                },
+              },
+            },
+          },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/random/must-hear": {
+      get: {
+        summary: "Get a random must-hear album (never cached)",
+        description: "Returns a randomly chosen essential album from the must-hear catalog. Never cached.",
+        operationId: "getRandomMustHear",
+        parameters: [
+          { name: "year", in: "query", required: false, schema: { type: "string" }, description: "Filter by 4-digit year", example: "2020" },
+          { name: "decade", in: "query", required: false, schema: { type: "string" }, description: "Filter by decade (e.g. '1990s')", example: "1990s" },
+        ],
+        responses: {
+          "200": {
+            description: "Random must-hear album",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    album: { $ref: "#/components/schemas/AlbumBlock" },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
     "/random/album": {
       get: {
         summary: "Get a random album (never cached)",
@@ -3050,6 +3505,35 @@ export const openApiSpec = {
         responses: {
           "200": {
             description: "Random album details",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/AlbumDetail" } } },
+          },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/random/release": {
+      get: {
+        summary: "Get a random album or release (alias of /random/album)",
+        description: "Returns a random album or release. Query parameters mirror /random/album. Responses are never cached.",
+        operationId: "getRandomRelease",
+        parameters: [
+          { name: "type", in: "query", schema: { type: "string" }, description: "Filter by release type (e.g. lp, ep, single, mixtape, live, etc.)" },
+          { name: "yearFrom", in: "query", schema: { type: "string" }, description: "Filter by minimum release year, e.g. 1990" },
+          { name: "yearTo", in: "query", schema: { type: "string" }, description: "Filter by maximum release year, e.g. 1999" },
+          { name: "genre", in: "query", schema: { type: "string" }, description: "Filter by primary genre ID, e.g. 7 (Rock) or 3 (Hip Hop)" },
+          { name: "genreSecondary", in: "query", schema: { type: "string" }, description: "Filter by secondary genre ID" },
+          { name: "criticScoreMin", in: "query", schema: { type: "string" }, description: "Minimum critic score (0-100)" },
+          { name: "criticScoreMax", in: "query", schema: { type: "string" }, description: "Maximum critic score (0-100)" },
+          { name: "userScoreMin", in: "query", schema: { type: "string" }, description: "Minimum user score (0-100)" },
+          { name: "userScoreMax", in: "query", schema: { type: "string" }, description: "Maximum user score (0-100)" },
+          { name: "criticReviewsMin", in: "query", schema: { type: "string" }, description: "Minimum number of critic reviews" },
+          { name: "criticReviewsMax", in: "query", schema: { type: "string" }, description: "Maximum number of critic reviews" },
+          { name: "userReviewsMin", in: "query", schema: { type: "string" }, description: "Minimum number of user reviews" },
+          { name: "userReviewsMax", in: "query", schema: { type: "string" }, description: "Maximum number of user reviews" },
+        ],
+        responses: {
+          "200": {
+            description: "Random album or release details",
             content: { "application/json": { schema: { $ref: "#/components/schemas/AlbumDetail" } } },
           },
           "500": { $ref: "#/components/responses/ServerError" },
@@ -4044,6 +4528,15 @@ export const openApiSpec = {
           value: { type: "string" },
           link: { type: "string" },
           description: { type: ["string", "null"] },
+        },
+      },
+      GenreAutocompleteItem: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          slug: { type: "string" },
+          url: { type: "string" },
         },
       },
       SearchAutocompleteItem: {

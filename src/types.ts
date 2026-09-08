@@ -629,6 +629,13 @@ export interface LabelAutocompleteItem {
   description?: string | null;
 }
 
+export interface GenreAutocompleteItem {
+  id: string;
+  name: string;
+  slug: string;
+  url: string;
+}
+
 export interface SearchAutocompleteItem {
   value: string;
   label?: string;

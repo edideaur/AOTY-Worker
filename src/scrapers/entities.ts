@@ -4,6 +4,7 @@ import type {
   ChartItem,
   CriticDetail,
   CriticReviewEntry,
+  GenreAutocompleteItem,
   GenreDetail,
   GenreIndexItem,
   GenreSection,
@@ -863,6 +864,35 @@ export async function scrapeGenreName(
   if (!res.ok) throw new Error(`Genre name fetch failed: ${res.status}`);
   const text = (await res.text()).trim();
   return { id: genreId, name: decodeEntities(text) };
+}
+
+export async function scrapeGenreAutocomplete(
+  query: string,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<GenreAutocompleteItem[]> {
+  const enc = encodeURIComponent(query);
+  const res = await fetch(`${BASE}/scripts/albumGenreAutocomplete.php?term=${enc}`, {
+    ...opts,
+    headers: {
+      ...REQ_HEADERS,
+      Accept: "application/json",
+      "X-Requested-With": "XMLHttpRequest",
+      Referer: `${BASE}/`,
+    },
+  });
+  if (!res.ok) throw new Error(`Genre autocomplete fetch failed: ${res.status}`);
+  const data = (await res.json()) as Array<Record<string, unknown>>;
+  return data.map((item) => {
+    const rawLink = String(item["link"] ?? "");
+    const slugM = rawLink.match(/\/genre\/([^/]+)/);
+    const slug = slugM?.[1] ?? rawLink.replace(/^\/+|\/+$/g, "");
+    return {
+      id: String(item["id"] ?? ""),
+      name: decodeEntities(String(item["value"] ?? "").trim()),
+      slug,
+      url: rawLink.startsWith("http") ? rawLink : `${BASE}${rawLink.startsWith("/") ? "" : "/"}${rawLink}`,
+    };
+  });
 }
 
 

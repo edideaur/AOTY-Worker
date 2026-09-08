@@ -149,11 +149,10 @@ export async function scrapeUserRatings(
   if (genreId) queryParams.set("genreID", genreId);
   const qs = queryParams.toString();
   if (qs) url += `?${qs}`;
-  if (decade) url += `?d=${encodeURIComponent(decade)}`;
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`User ratings fetch failed: ${res.status}`);
   const ratings = await scrapeUserAlbumBlocks(res, username);
-  return { username, page, type, decade, sort, ratings };
+  return { username, page, type, decade, sort, year, genreId, ratings };
 }
 
 export async function scrapeUserListened(

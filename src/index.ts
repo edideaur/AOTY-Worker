@@ -7,7 +7,7 @@ import { scrapeNewsPage, scrapeNewsFeed, scrapeNewsFeedXml } from "./scrapers/ne
 import { scrapeListsIndex, scrapeListDetail, scrapeYearEndSummary, scrapeCommunityYearEnd } from "./scrapers/lists.js";
 import { scrapeArtistSearch, scrapeLabelAutocomplete, scrapeLabelSearch, scrapeSearchAutocomplete, scrapeUserSearch } from "./scrapers/search.js";
 import { scrapeAlbumStats, scrapeAlbumCredits, scrapeAlbumRatingHistory, scrapeAlbumDistribution, scrapeAlbumUsers, scrapeAlbumImages } from "./scrapers/albumExtras.js";
-import { scrapeArtistPage, scrapeArtistTopSongs, scrapeSimilarArtists, scrapeArtistNews, scrapeArtistCredits, listArtistCreditRoles, scrapeRandomArtist } from "./scrapers/artist.js";
+import { scrapeArtistPage, scrapeArtistTopSongs, scrapeSimilarArtists, scrapeArtistNews, scrapeArtistCredits, listArtistCreditRoles, scrapeRandomArtist, scrapeArtistDiscography } from "./scrapers/artist.js";
 import {
   scrapeArtistsOverview,
   scrapeCriticPage,
@@ -20,6 +20,7 @@ import {
   scrapePublicationReviewsPage,
   scrapeSubGenres,
   scrapeGenreName,
+  scrapeGenreAutocomplete,
   scrapeTagPage,
 } from "./scrapers/entities.js";
 import { scrapeSongPage, scrapeSongRatingsPage, scrapeTopSongs, scrapeBestSongsYearEnd } from "./scrapers/song.js";
@@ -139,7 +140,7 @@ const TTL = {
 
 function computeTtl(path: string, q: URLSearchParams, data: unknown): number | undefined {
   // News + live listings refresh constantly
-  if (path === "/news" || path === "/news-item" || path === "/feed/news" || path === "/feed/news.xml"
+  if (path.startsWith("/news") || path === "/feed/news" || path === "/feed/news.xml"
     || path === "/releases" || path === "/releases/singles" || path === "/releases/this-week" || path === "/releases/this-week/singles"
     || path === "/releases/by-date" || path === "/releases/month" || path === "/releases/week" || path === "/releases/vibe" || path === "/recently-added" || path === "/on-this-day"
     || path === "/discover" || path === "/discover/singles" || path === "/discover/people"
@@ -150,14 +151,24 @@ function computeTtl(path: string, q: URLSearchParams, data: unknown): number | u
 
   // Upcoming / search / current-year charts / user content: 24 h
   if (path === "/upcoming" || path.startsWith("/search") || path === "/ratings"
-    || path === "/top-artists" || path === "/songs/top"
+    || path === "/top-artists" || path === "/songs/top" || path === "/artist/top-songs"
     || path === "/labels/autocomplete" || path === "/label/autocomplete"
+    || path === "/genres/autocomplete" || path === "/genre/autocomplete"
+    || path === "/artist/discography"
+    || path === "/album/stats"
     || path === "/user/ratings" || path === "/user/perfect" || path === "/user/reviews" || path === "/user/lists"
     || path === "/user/listened" || path === "/user/library" || path === "/user/liked-albums"
     || path === "/user/tags" || path === "/user/tag" || path === "/user/genres" || path === "/user/badges"
+    || path === "/user/stats" || path === "/user/favorites"
     || path.startsWith("/album/") || path === "/genre" || path === "/tag"
     || path === "/releases/decade"
   ) return TTL.DAY;
+
+  if (path === "/releases/year") {
+    const year = q.get("year");
+    if (year && parseInt(year, 10) < new Date().getFullYear()) return TTL.MONTH;
+    return TTL.HOUR;
+  }
 
   if (path === "/must-hear") {
     const year = q.get("year");
@@ -187,17 +198,22 @@ function computeTtl(path: string, q: URLSearchParams, data: unknown): number | u
     path === "/album/user-lists"
     || path === "/album/critic-lists"
     || path === "/album/critic-reviews"
+    || path === "/album/reviews"
     || path === "/album/tags"
     || path === "/album/rating-history"
     || path === "/album/distribution"
     || path === "/album/images"
+    || path === "/album/credits"
+    || path === "/album/tracklist"
+    || path === "/album/streaming"
+    || path === "/album/streaming-links"
     || path === "/genre/name"
     || path === "/ratings/sources"
     || path === "/ratings/genres"
     || path === "/publication/perfect"
   ) return TTL.MONTH;
 
-  if (path === "/artist/credits" || path === "/artist/news" || path === "/album/likes" || path === "/album/in-library" || path === "/user/artist-ratings" || path === "/user/track-ratings" || path === "/album/corrections" || path === "/artist/corrections" || path === "/song/corrections") return TTL.DAY;
+  if (path === "/artist/credits" || path === "/artist/news" || path === "/album/likes" || path === "/album/in-library" || path === "/user/artist-ratings" || path === "/user/track-ratings" || path === "/album/corrections" || path === "/artist/corrections" || path === "/song/corrections" || path === "/corrections") return TTL.DAY;
 
   if (path === "/user/followers" || path === "/user/following" || path === "/user/distribution") return TTL.DAY;
 
@@ -572,16 +588,45 @@ async function fetchAlbumBlocks(aotyPath: string, opts: FetchOpts) {
   return scrapeAlbumBlocks(res);
 }
 
+const RESERVED_ALBUM_SUBPATHS = new Set([
+  "similar", "user-reviews", "critic-reviews", "reviews", "comments",
+  "tags", "rating-history", "distribution", "credits", "stats", "tracklist",
+  "streaming", "streaming-links", "likes", "in-library", "library", "images",
+  "corrections", "user-lists", "critic-lists",
+]);
+
+const RESERVED_ARTIST_SUBPATHS = new Set([
+  "discography", "similar", "songs", "top-songs", "news", "credits", "corrections",
+]);
+
+const RESERVED_GENRE_SUBPATHS = new Set([
+  "autocomplete", "name",
+]);
+
+const RESERVED_USER_SUBPATHS = new Set([
+  "ratings", "perfect", "reviews", "listened", "library", "liked-albums",
+  "tags", "tag", "lists", "list", "stats", "favorites", "followers",
+  "following", "review", "genres", "badges", "year-end", "distribution",
+  "artist-ratings", "track-ratings",
+]);
+
 async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise<unknown> {
-  if (path === "/album") {
-    const rawSlug = q.get("slug");
+  let rawAlbumSlug = q.get("slug");
+  if (!rawAlbumSlug) {
+    const m = path.match(/^\/album\/([^/]+)$/);
+    if (m?.[1] && !RESERVED_ALBUM_SUBPATHS.has(m[1])) {
+      rawAlbumSlug = m[1];
+    }
+  }
+
+  if (path === "/album" || (() => { const m = path.match(/^\/album\/([^/]+)$/); return !!m?.[1] && !RESERVED_ALBUM_SUBPATHS.has(m[1]); })()) {
     const artist = q.get("artist");
     const name = q.get("name");
     const minimal = q.get("minimal") === "true";
 
     let albumUrl: string | null;
-    if (rawSlug) {
-      const slug = normSlug(rawSlug);
+    if (rawAlbumSlug) {
+      const slug = normSlug(rawAlbumSlug);
       albumUrl = `${BASE}/album/${slug}/`;
     } else if (artist && name) {
       albumUrl = await findAlbumUrl(artist, name, opts);
@@ -604,7 +649,9 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
 
   if (path === "/releases") {
     const page = getPage(q);
-    return { page, albums: await fetchAlbumBlocks(`/releases/${page}/`, opts) };
+    const type = q.get("type");
+    const qs = type ? `?type=${encodeURIComponent(type)}` : "";
+    return { page, type: type ?? null, albums: await fetchAlbumBlocks(`/releases/${page}/${qs}`, opts) };
   }
 
   if (path === "/releases/singles") {
@@ -664,6 +711,13 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return { page, type: feedType, items: await scrapeNewsPage(`${BASE}/l/${feedType}/${page}/`, opts) };
   }
 
+  const newsTypeMatch = path.match(/^\/news\/(newsworthy|new|comment)$/);
+  if (newsTypeMatch?.[1]) {
+    const feedType = newsTypeMatch[1];
+    const page = getPage(q);
+    return { page, type: feedType, items: await scrapeNewsPage(`${BASE}/l/${feedType}/${page}/`, opts) };
+  }
+
   if (path === "/feed/news") {
     return scrapeNewsFeed(opts);
   }
@@ -702,7 +756,7 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeListDetail(`${BASE}/list/${slug}/`, opts);
   }
 
-  if (path === "/search") {
+  if (path === "/search" || path === "/search/all") {
     const queryStr = getRequiredParam(q, "q");
     const enc = encodeURIComponent(queryStr);
     const [albums, artists, labels, lists, news, tags, users] = await Promise.all([
@@ -770,8 +824,17 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return { query: queryStr, suggestions: await scrapeLabelAutocomplete(queryStr, opts) };
   }
 
-  if (path === "/artist") {
-    const slug = normSlug(getRequiredParam(q, "slug"));
+  let rawArtistSlug = q.get("slug");
+  if (!rawArtistSlug) {
+    const m = path.match(/^\/artist\/([^/]+)$/);
+    if (m?.[1] && !RESERVED_ARTIST_SUBPATHS.has(m[1])) {
+      rawArtistSlug = m[1];
+    }
+  }
+
+  if (path === "/artist" || (() => { const m = path.match(/^\/artist\/([^/]+)$/); return !!m?.[1] && !RESERVED_ARTIST_SUBPATHS.has(m[1]); })()) {
+    if (!rawArtistSlug) rawArtistSlug = getRequiredParam(q, "slug");
+    const slug = normSlug(rawArtistSlug);
     const type = q.get("type");
     const sort = q.get("sort");
     const page = getPage(q);
@@ -783,13 +846,32 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeArtistPage(`${BASE}/artist/${slug}/${suffix}`, opts);
   }
 
+  if (path === "/artist/discography") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const type = q.get("type");
+    const sort = q.get("sort");
+    const page = getPage(q);
+    const params = new URLSearchParams();
+    if (type) params.set("type", type);
+    if (sort) params.set("s", sort);
+    if (page > 1) params.set("p", String(page));
+    const suffix = params.toString() ? `?${params}` : "";
+    return {
+      slug,
+      type: type ?? null,
+      sort: sort ?? null,
+      page,
+      sections: await scrapeArtistDiscography(`${BASE}/artist/${slug}/${suffix}`, opts),
+    };
+  }
+
   if (path === "/artist/similar") {
     const slug = normSlug(getRequiredParam(q, "slug"));
     const page = getPage(q);
     return { slug, page, artists: await scrapeSimilarArtists(slug, opts, page) };
   }
 
-  if (path === "/artist/songs") {
+  if (path === "/artist/songs" || path === "/artist/top-songs") {
     const slug = normSlug(getRequiredParam(q, "slug"));
     const page = getPage(q);
     const aotyPath = page > 1 ? `${BASE}/artist/${slug}/best-songs/${page}/` : `${BASE}/artist/${slug}/best-songs/`;
@@ -825,7 +907,40 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeRandomArtist(opts);
   }
 
-  if (path === "/random/album") {
+  if (path === "/random/genre") {
+    const genres = await scrapeGenresIndex(opts);
+    const genre = genres[Math.floor(Math.random() * genres.length)];
+    if (!genre) throw new ApiError("No genres found", 404);
+    return { genre };
+  }
+
+  if (path === "/random/song") {
+    const period = q.get("period") ?? q.get("year") ?? "all";
+    const page = Math.floor(Math.random() * 3) + 1;
+    const { songs } = await scrapeTopSongs(period, page, opts);
+    const song = songs[Math.floor(Math.random() * songs.length)];
+    if (!song) throw new ApiError("No songs found", 404);
+    return { period, song };
+  }
+
+  if (path === "/random/must-hear") {
+    const rawYear = q.get("year");
+    const rawDecade = q.get("decade");
+    let aotyPath = "/must-hear/";
+    if (rawYear) {
+      if (!/^\d{4}$/.test(rawYear.trim())) throw new ApiError("Invalid year format", 400);
+      aotyPath = `/must-hear/${rawYear.trim()}/`;
+    } else if (rawDecade) {
+      if (!/^\d{4}s$/.test(rawDecade.trim())) throw new ApiError("Invalid decade format", 400);
+      aotyPath = `/must-hear/${rawDecade.trim()}/`;
+    }
+    const albums = await fetchAlbumBlocks(aotyPath, opts);
+    const album = albums[Math.floor(Math.random() * albums.length)];
+    if (!album) throw new ApiError("No must-hear albums found", 404);
+    return { album };
+  }
+
+  if (path === "/random/album" || path === "/random/release") {
     const filter: RandomAlbumFilter = {
       type: q.get("type") ?? undefined,
       yearFrom: q.get("yearFrom") ?? undefined,
@@ -849,11 +964,25 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return { query: queryStr, tags: await scrapeAlbumTagAutocomplete(queryStr, opts) };
   }
 
-  if (path === "/label") {
-    const slug = normSlug(getRequiredParam(q, "slug"));
+  let rawLabelSlug = q.get("slug");
+  if (!rawLabelSlug) {
+    const m = path.match(/^\/label\/([^/]+)$/);
+    if (m?.[1] && m[1] !== "autocomplete") {
+      rawLabelSlug = m[1];
+    }
+  }
+
+  if (path === "/label" || (() => { const m = path.match(/^\/label\/([^/]+)$/); return !!m?.[1] && m[1] !== "autocomplete"; })()) {
+    if (!rawLabelSlug) rawLabelSlug = getRequiredParam(q, "slug");
+    const slug = normSlug(rawLabelSlug);
     const page = getPage(q);
     const aotyPath = page > 1 ? `${BASE}/label/${slug}/${page}/` : `${BASE}/label/${slug}/`;
     return scrapeLabelPage(aotyPath, opts, page);
+  }
+
+  if (path === "/genres/autocomplete" || path === "/genre/autocomplete") {
+    const queryStr = getRequiredParam(q, "q");
+    return { query: queryStr, suggestions: await scrapeGenreAutocomplete(queryStr, opts) };
   }
 
   if (path === "/genres") {
@@ -870,8 +999,17 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeGenreName(genreId, opts);
   }
 
-  if (path === "/genre") {
-    const slug = normSlug(getRequiredParam(q, "slug"));
+  let rawGenreSlug = q.get("slug");
+  if (!rawGenreSlug) {
+    const m = path.match(/^\/genre\/([^/]+)$/);
+    if (m?.[1] && !RESERVED_GENRE_SUBPATHS.has(m[1])) {
+      rawGenreSlug = m[1];
+    }
+  }
+
+  if (path === "/genre" || (() => { const m = path.match(/^\/genre\/([^/]+)$/); return !!m?.[1] && !RESERVED_GENRE_SUBPATHS.has(m[1]); })()) {
+    if (!rawGenreSlug) rawGenreSlug = getRequiredParam(q, "slug");
+    const slug = normSlug(rawGenreSlug);
     const period = (q.get("period") ?? "").trim();
     const page = getPage(q);
     const sort = q.get("sort");
@@ -1062,6 +1200,28 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeUserBadges(username, opts);
   }
 
+  if (path === "/user/stats") {
+    const username = getRequiredParam(q, "username");
+    const profile = await scrapeUserProfile(username, opts);
+    return {
+      username: profile.username,
+      displayName: profile.displayName ?? profile.username,
+      memberSince: profile.memberSince ?? null,
+      subscriber: profile.subscriber,
+      stats: profile.stats,
+      ratingDistribution: profile.ratingDistribution,
+    };
+  }
+
+  if (path === "/user/favorites") {
+    const username = getRequiredParam(q, "username");
+    const profile = await scrapeUserProfile(username, opts);
+    return {
+      username: profile.username,
+      favorites: profile.favorites,
+    };
+  }
+
   if (path === "/user/year-end") {
     const username = getRequiredParam(q, "username");
     const rawYear = getRequiredParam(q, "year");
@@ -1158,6 +1318,18 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
   if (path === "/releases/this-week") {
     const page = getPage(q);
     return { page, albums: await fetchAlbumBlocks(page > 1 ? `/releases/this-week/${page}/` : "/releases/this-week/", opts) };
+  }
+
+  if (path === "/releases/year") {
+    const rawYear = getRequiredParam(q, "year");
+    if (!/^\d{4}$/.test(rawYear.trim())) throw new ApiError("Invalid year format", 400);
+    const year = rawYear.trim();
+    const genre = q.get("genre");
+    const page = getPage(q);
+    const pageSuffix = page > 1 ? `${page}/` : "";
+    let aotyPath = `/${year}/releases/${pageSuffix}`;
+    if (genre) aotyPath += `?genre=${encodeURIComponent(genre)}`;
+    return { year, genre: genre ?? null, page, albums: await fetchAlbumBlocks(aotyPath, opts) };
   }
 
   if (path === "/releases/decade") {
@@ -1288,6 +1460,23 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeAlbumCriticReviews(slug, sort, opts);
   }
 
+  if (path === "/album/reviews") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const reviewType = q.get("type") ?? "critic";
+    if (reviewType !== "critic" && reviewType !== "user")
+      throw new ApiError("Invalid type: must be critic or user", 400);
+    if (reviewType === "user") {
+      const sort = q.get("sort") ?? "popular";
+      if (sort !== "popular" && sort !== "recent" && sort !== "worst")
+        throw new ApiError("Invalid sort: must be popular, recent or worst", 400);
+      return scrapeAlbumUserReviews(slug, sort, getPage(q), opts, "reviews");
+    }
+    const sort = q.get("sort") ?? "highest";
+    if (sort !== "highest" && sort !== "lowest" && sort !== "newest" && sort !== "oldest")
+      throw new ApiError("Invalid sort: must be highest, lowest, newest or oldest", 400);
+    return scrapeAlbumCriticReviews(slug, sort, opts);
+  }
+
   if (path === "/album/tags") {
     const slug = normSlug(getRequiredParam(q, "slug"));
     return scrapeAlbumTags(slug, opts);
@@ -1305,6 +1494,72 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
       throw new ApiError("Invalid format: must be all or following", 400);
     }
     return scrapeAlbumDistribution(albumId, format);
+  }
+
+  if (path === "/album/credits") {
+    const slug = q.get("slug");
+    const albumId = q.get("albumId") ?? (slug ? slug.match(/^(\d+)/)?.[1] : null);
+    if (!albumId) throw new ApiError("Missing required parameter: albumId or slug with ID", 400);
+    const credits = await scrapeAlbumCredits(albumId);
+    return { albumId, credits };
+  }
+
+  if (path === "/album/stats") {
+    const slug = q.get("slug");
+    const albumId = q.get("albumId") ?? (slug ? slug.match(/^(\d+)/)?.[1] : null);
+    if (!albumId) throw new ApiError("Missing required parameter: albumId or slug with ID", 400);
+    const stats = await scrapeAlbumStats(albumId);
+    return { albumId, stats };
+  }
+
+  if (path === "/album/tracklist") {
+    const rawSlug = q.get("slug");
+    const artist = q.get("artist");
+    const name = q.get("name");
+    let albumUrl: string | null;
+    let norm: string | null = null;
+    if (rawSlug) {
+      norm = normSlug(rawSlug);
+      albumUrl = `${BASE}/album/${norm}/`;
+    } else if (artist && name) {
+      albumUrl = await findAlbumUrl(artist, name, opts);
+      if (!albumUrl) throw new ApiError("Album not found", 404);
+    } else {
+      throw new ApiError("Provide either slug (ID or full slug) or both artist and name", 400);
+    }
+    const detail = await scrapeAlbumPage(albumUrl, opts);
+    return {
+      slug: norm ?? (detail.url.match(/\/album\/([^/]+)/)?.[1] ?? null),
+      artist: detail.artist,
+      title: detail.title,
+      url: detail.url,
+      tracklist: detail.tracklist,
+    };
+  }
+
+  if (path === "/album/streaming" || path === "/album/streaming-links") {
+    const rawSlug = q.get("slug");
+    const artist = q.get("artist");
+    const name = q.get("name");
+    let albumUrl: string | null;
+    let norm: string | null = null;
+    if (rawSlug) {
+      norm = normSlug(rawSlug);
+      albumUrl = `${BASE}/album/${norm}/`;
+    } else if (artist && name) {
+      albumUrl = await findAlbumUrl(artist, name, opts);
+      if (!albumUrl) throw new ApiError("Album not found", 404);
+    } else {
+      throw new ApiError("Provide either slug (ID or full slug) or both artist and name", 400);
+    }
+    const detail = await scrapeAlbumPage(albumUrl, opts);
+    return {
+      slug: norm ?? (detail.url.match(/\/album\/([^/]+)/)?.[1] ?? null),
+      artist: detail.artist,
+      title: detail.title,
+      url: detail.url,
+      streamingLinks: detail.streamingLinks,
+    };
   }
 
   if (path === "/album/likes") {
@@ -1334,6 +1589,16 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     const id = q.get("albumId") ?? q.get("slug");
     if (!id) throw new ApiError("Missing required parameter: albumId or slug with ID", 400);
     return scrapeEntityCorrections("album", id, opts);
+  }
+
+  if (path === "/corrections") {
+    const type = getRequiredParam(q, "type");
+    if (type !== "album" && type !== "artist" && type !== "song") {
+      throw new ApiError("Invalid type: must be album, artist, or song", 400);
+    }
+    const id = q.get("id") ?? q.get("slug") ?? q.get("albumId") ?? q.get("songId");
+    if (!id) throw new ApiError("Missing required parameter: id or slug", 400);
+    return scrapeEntityCorrections(type, id, opts);
   }
 
   if (path === "/album/comments/replies") {
@@ -1485,7 +1750,7 @@ if (path === "/rapidoc") return htmlPage(RAPIDOC_HTML);
     }
 
     const skipCache = q.get("cache") === "false";
-    const noStore = path === "/random/artist" || path === "/random/album";
+    const noStore = path.startsWith("/random/");
     const baseOpts = skipCache || noStore ? FETCH_OPTS_FRESH : FETCH_OPTS;
     const fetchOpts: FetchOpts = {
       ...baseOpts,

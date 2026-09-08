@@ -12,6 +12,7 @@ import {
   scrapeArtistsOverview,
   scrapeSubGenres,
   scrapeGenreName,
+  scrapeGenreAutocomplete,
 } from "../src/scrapers/entities.js";
 
 describe("entities scrapers unit tests", () => {
@@ -419,6 +420,43 @@ describe("entities scrapers unit tests", () => {
       const res = await scrapeGenreName("7");
       expect(res.id).toBe("7");
       expect(res.name).toBe("Rock");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("parses genre autocomplete results correctly", async () => {
+    const mockData = [
+      { id: "7", value: "Rock &amp; Roll", link: "/genre/7-rock-roll/" },
+      { id: "29", value: "Post-Rock", link: "https://www.albumoftheyear.org/genre/29-post-rock/" },
+    ];
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response(JSON.stringify(mockData), { status: 200 });
+      const res = await scrapeGenreAutocomplete("rock");
+      expect(res.length).toBe(2);
+      expect(res[0]?.id).toBe("7");
+      expect(res[0]?.name).toBe("Rock & Roll");
+      expect(res[0]?.slug).toBe("7-rock-roll");
+      expect(res[0]?.url).toBe("https://www.albumoftheyear.org/genre/7-rock-roll/");
+      expect(res[1]?.id).toBe("29");
+      expect(res[1]?.name).toBe("Post-Rock");
+      expect(res[1]?.slug).toBe("29-post-rock");
+      expect(res[1]?.url).toBe("https://www.albumoftheyear.org/genre/29-post-rock/");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("handles empty and failed genre autocomplete results", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response("[]", { status: 200 });
+      const res = await scrapeGenreAutocomplete("nonexistent");
+      expect(res).toEqual([]);
+
+      globalThis.fetch = async () => new Response("Error", { status: 500 });
+      expect(scrapeGenreAutocomplete("fail")).rejects.toThrow("Genre autocomplete fetch failed: 500");
     } finally {
       globalThis.fetch = originalFetch;
     }

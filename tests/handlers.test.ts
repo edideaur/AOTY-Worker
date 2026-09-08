@@ -445,4 +445,343 @@ describe("Query parameter routing & response shapes", () => {
       restore();
     }
   });
+
+  it("handles /genres/autocomplete and /genre/autocomplete routes", async () => {
+    const mockSuggestions = [{ id: "7", value: "Rock", link: "/genre/7-rock/" }];
+    const restore = mockFetch(async (input) => {
+      const url = String(input);
+      if (url.includes("albumGenreAutocomplete.php")) {
+        return new Response(JSON.stringify(mockSuggestions), { status: 200 });
+      }
+      return new Response("[]", { status: 200 });
+    });
+
+    try {
+      const res = await worker.fetch(req("/genres/autocomplete?q=rock"), env);
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { query: string; suggestions: Array<{ id: string; name: string; slug: string; url: string }> };
+      expect(json.query).toBe("rock");
+      expect(json.suggestions.length).toBe(1);
+      expect(json.suggestions[0]?.name).toBe("Rock");
+      expect(json.suggestions[0]?.slug).toBe("7-rock");
+
+      const resAlias = await worker.fetch(req("/genre/autocomplete?q=rock"), env);
+      expect(resAlias.status).toBe(200);
+
+      const resMissing = await worker.fetch(req("/genres/autocomplete"), env);
+      expect(resMissing.status).toBe(400);
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles /releases/year route and /releases with type filter", async () => {
+    const albumHtml = `<div class="albumBlock"><div class="albumTitle">Year Album</div><div class="artistTitle">Artist</div><div class="type">2024</div></div>`;
+    let requestedUrl = "";
+    const restore = mockFetch(async (input) => {
+      requestedUrl = String(input);
+      return new Response(albumHtml, { status: 200 });
+    });
+
+    try {
+      const res = await worker.fetch(req("/releases/year?year=2024&genre=rock&page=2"), env);
+      expect(res.status).toBe(200);
+      expect(requestedUrl).toContain("/2024/releases/2/");
+      expect(requestedUrl).toContain("genre=rock");
+      const json = (await res.json()) as { year: string; genre: string; page: number; albums: unknown[] };
+      expect(json.year).toBe("2024");
+      expect(json.genre).toBe("rock");
+      expect(json.page).toBe(2);
+      expect(json.albums.length).toBe(1);
+
+      const resInvalid = await worker.fetch(req("/releases/year?year=24"), env);
+      expect(resInvalid.status).toBe(400);
+
+      const resMissing = await worker.fetch(req("/releases/year"), env);
+      expect(resMissing.status).toBe(400);
+
+      const resReleases = await worker.fetch(req("/releases?page=1&type=ep"), env);
+      expect(resReleases.status).toBe(200);
+      expect(requestedUrl).toContain("/releases/1/?type=ep");
+      const jsonReleases = (await resReleases.json()) as { page: number; type: string; albums: unknown[] };
+      expect(jsonReleases.type).toBe("ep");
+      expect(jsonReleases.albums.length).toBe(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles /artist/discography route", async () => {
+    const artistHtml = `
+      <h1 class="headline">Artist Name</h1>
+      <div class="albumBlock" data-type="LP">
+        <div class="artistTitle">Artist Name</div>
+        <div class="albumTitle">Great Album</div>
+        <div class="type">2020</div>
+      </div>
+    `;
+    let requestedUrl = "";
+    const restore = mockFetch(async (input) => {
+      requestedUrl = String(input);
+      return new Response(artistHtml, { status: 200 });
+    });
+
+    try {
+      const res = await worker.fetch(req("/artist/discography?slug=30-radiohead&type=lp&sort=critic&page=1"), env);
+      expect(res.status).toBe(200);
+      expect(requestedUrl).toContain("/artist/30-radiohead/");
+      expect(requestedUrl).toContain("type=lp");
+      expect(requestedUrl).toContain("s=critic");
+      const json = (await res.json()) as { slug: string; type: string; sort: string; page: number; sections: unknown[] };
+      expect(json.slug).toBe("30-radiohead");
+      expect(json.type).toBe("lp");
+      expect(json.sort).toBe("critic");
+      expect(json.sections).toBeDefined();
+
+      const resMissing = await worker.fetch(req("/artist/discography"), env);
+      expect(resMissing.status).toBe(400);
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles /random/release as alias for /random/album", async () => {
+    const albumHtml = `<script type="application/ld+json">{"@type":"MusicAlbum","name":"Kid A","byArtist":{"name":"Radiohead"}}</script>`;
+    const restore = mockFetch(async (input) => {
+      const url = String(input);
+      if (url.includes("/random/")) {
+        return new Response('<html><head><meta http-equiv="refresh" content="0; url=https://www.albumoftheyear.org/album/2-kid-a/"></head></html>', { status: 200 });
+      }
+      return new Response(albumHtml, { status: 200 });
+    });
+
+    try {
+      const res = await worker.fetch(req("/random/release"), env);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
+      const json = (await res.json()) as { title: string; artist: string };
+      expect(json.title).toBe("Kid A");
+      expect(json.artist).toBe("Radiohead");
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles /album/credits and /album/stats routes", async () => {
+    const creditsHtml = `<div class="sectionTitle">Production</div><div class="credit"><div class="name"><a href="/artist/1-producer/">Producer</a></div></div>`;
+    const statsHtml = `<table><tr><td>Favorites</td><td>123</td></tr></table>`;
+    const restore = mockFetch(async (input) => {
+      const url = String(input);
+      if (url.includes("showAlbumCredits.php")) return new Response(creditsHtml, { status: 200 });
+      if (url.includes("moreStatsAlbum.php")) return new Response(statsHtml, { status: 200 });
+      return new Response("{}", { status: 200 });
+    });
+
+    try {
+      const resCredits = await worker.fetch(req("/album/credits?albumId=2915"), env);
+      expect(resCredits.status).toBe(200);
+      const jsonCredits = (await resCredits.json()) as { albumId: string; credits: unknown[] };
+      expect(jsonCredits.albumId).toBe("2915");
+      expect(jsonCredits.credits).toBeDefined();
+
+      const resCreditsSlug = await worker.fetch(req("/album/credits?slug=2915-outkast-aquemini"), env);
+      expect(resCreditsSlug.status).toBe(200);
+
+      const resCreditsMissing = await worker.fetch(req("/album/credits"), env);
+      expect(resCreditsMissing.status).toBe(400);
+
+      const resStats = await worker.fetch(req("/album/stats?albumId=2915"), env);
+      expect(resStats.status).toBe(200);
+      const jsonStats = (await resStats.json()) as { albumId: string; stats: unknown };
+      expect(jsonStats.albumId).toBe("2915");
+      expect(jsonStats.stats).toBeDefined();
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles /album/tracklist and /album/streaming routes", async () => {
+    const albumHtml = `
+      <script type="application/ld+json">{"@type":"MusicAlbum","name":"Aquemini","byArtist":{"name":"OutKast"}}</script>
+      <div id="tracklist"><table class="trackListTable"><tr><td class="trackNumber">1.</td><td class="trackTitle"><a href="/song/1-hold-on/">Hold On</a></td><td class="trackLength">3:00</td></tr></table></div>
+      <div class="albumLinksFlex"><a href="https://open.spotify.com/album/123" title="Spotify" rel="nofollow">Spotify</a></div>
+    `;
+    const restore = mockFetch(async () => new Response(albumHtml, { status: 200 }));
+
+    try {
+      const resTracklist = await worker.fetch(req("/album/tracklist?slug=2915-outkast-aquemini"), env);
+      expect(resTracklist.status).toBe(200);
+      const jsonTracklist = (await resTracklist.json()) as { title: string; artist: string; tracklist: Array<{ title: string; number: string }> };
+      expect(jsonTracklist.title).toBe("Aquemini");
+      expect(jsonTracklist.artist).toBe("OutKast");
+      expect(jsonTracklist.tracklist.length).toBe(1);
+      expect(jsonTracklist.tracklist[0]?.title).toBe("Hold On");
+
+      const resStreaming = await worker.fetch(req("/album/streaming?slug=2915-outkast-aquemini"), env);
+      expect(resStreaming.status).toBe(200);
+      const jsonStreaming = (await resStreaming.json()) as { title: string; streamingLinks: Array<{ platform: string; url: string }> };
+      expect(jsonStreaming.title).toBe("Aquemini");
+      expect(jsonStreaming.streamingLinks.length).toBe(1);
+      expect(jsonStreaming.streamingLinks[0]?.platform).toBe("Spotify");
+
+      const resStreamingAlias = await worker.fetch(req("/album/streaming-links?slug=2915-outkast-aquemini"), env);
+      expect(resStreamingAlias.status).toBe(200);
+
+      const resMissing = await worker.fetch(req("/album/tracklist"), env);
+      expect(resMissing.status).toBe(400);
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles /artist/top-songs alias and /user/stats and /user/favorites routes", async () => {
+    const songsHtml = `
+      <table class="trackListTable">
+        <tr>
+          <td class="trackNumber">1.</td>
+          <td class="songAlbum"><a href="/song/1-song/">Song 1</a></td>
+          <td class="rating">90</td>
+        </tr>
+      </table>
+    `;
+    const userHtml = `
+      <h1 class="headline profile"><span>MusicGeek</span></h1>
+      <div class="profileStat">1,250</div><div class="profileStatName">Ratings</div>
+      <div class="profileStat">120</div><div class="profileStatName">Reviews</div>
+      <div id="favBlock"><div class="albumBlock" data-type="LP"><div class="albumTitle">Favorite Album</div></div></section></div>
+    `;
+    const restore = mockFetch(async (input) => {
+      const url = String(input);
+      if (url.includes("/best-songs/")) return new Response(songsHtml, { status: 200 });
+      return new Response(userHtml, { status: 200 });
+    });
+
+    try {
+      const resArtistSongs = await worker.fetch(req("/artist/top-songs?slug=284-radiohead"), env);
+      expect(resArtistSongs.status).toBe(200);
+      const jsonArtistSongs = (await resArtistSongs.json()) as { slug: string; songs: unknown[] };
+      expect(jsonArtistSongs.slug).toBe("284-radiohead");
+      expect(jsonArtistSongs.songs.length).toBe(1);
+
+      const resUserStats = await worker.fetch(req("/user/stats?username=musicgeek"), env);
+      expect(resUserStats.status).toBe(200);
+      const jsonUserStats = (await resUserStats.json()) as { username: string; stats: { ratings: string; reviews: string } };
+      expect(jsonUserStats.username).toBe("MusicGeek");
+      expect(jsonUserStats.stats.ratings).toBe("1,250");
+      expect(jsonUserStats.stats.reviews).toBe("120");
+
+      const resUserFavs = await worker.fetch(req("/user/favorites?username=musicgeek"), env);
+      expect(resUserFavs.status).toBe(200);
+      const jsonUserFavs = (await resUserFavs.json()) as { username: string; favorites: unknown[] };
+      expect(jsonUserFavs.username).toBe("MusicGeek");
+      expect(jsonUserFavs.favorites.length).toBe(1);
+
+      const resMissingUser = await worker.fetch(req("/user/stats"), env);
+      expect(resMissingUser.status).toBe(400);
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles /album/reviews and /corrections routes", async () => {
+    const criticReviewHtml = `<div class="albumReviewRow"><div class="albumReviewHeader"><div class="publication"><a href="/publication/1-p4k/">Pitchfork</a></div></div><div class="albumReviewRating">9.5</div></div>`;
+    const userReviewHtml = `<div class="albumReviewRow" id="review_123"><div class="userReviewName"><a href="/user/reviewer/">Reviewer</a></div><div class="rating">90</div><div class="albumReviewText user"><p>Amazing!</div></div>`;
+    const correctionsHtml = `<div class="correction"><div class="user"><a href="/user/editor/">Editor</a></div><div class="change">Updated track title</div></div>`;
+
+    const restore = mockFetch(async (input) => {
+      const url = String(input);
+      if (url.includes("/criticSort.php")) return new Response(criticReviewHtml, { status: 200 });
+      if (url.includes("/user-reviews/")) return new Response(userReviewHtml, { status: 200 });
+      if (url.includes("/corrections/")) return new Response(correctionsHtml, { status: 200 });
+      return new Response("{}", { status: 200 });
+    });
+
+    try {
+      const resCritic = await worker.fetch(req("/album/reviews?slug=1-album"), env);
+      expect(resCritic.status).toBe(200);
+      const jsonCritic = (await resCritic.json()) as { slug: string; sort: string; reviews: unknown[] };
+      expect(jsonCritic.slug).toBe("1-album");
+      expect(jsonCritic.sort).toBe("highest");
+      expect(jsonCritic.reviews.length).toBe(1);
+
+      const resUser = await worker.fetch(req("/album/reviews?slug=1-album&type=user"), env);
+      expect(resUser.status).toBe(200);
+      const jsonUser = (await resUser.json()) as { slug: string; sort: string; reviews: unknown[] };
+      expect(jsonUser.slug).toBe("1-album");
+      expect(jsonUser.reviews.length).toBe(1);
+
+      const resCorrections = await worker.fetch(req("/corrections?type=album&id=1"), env);
+      expect(resCorrections.status).toBe(200);
+      const jsonCorr = (await resCorrections.json()) as { id: string };
+      expect(jsonCorr.id).toBe("1");
+
+      const resInvalidType = await worker.fetch(req("/corrections?type=invalid&id=1"), env);
+      expect(resInvalidType.status).toBe(400);
+
+      const resMissingId = await worker.fetch(req("/corrections?type=album"), env);
+      expect(resMissingId.status).toBe(400);
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles /random/genre, /random/song, and /random/must-hear routes", async () => {
+    const genreHtml = `<h2><a href="/genre/7-rock/">Rock</a></h2><div class="albumBlock"><div class="albumTitle">Album</div></div>`;
+    const songHtml = `<table class="trackListTable"><tr><td class="trackNumber">1.</td><td class="songAlbum"><a href="/song/1-song/">Song 1</a></td><td class="rating">90</td></tr></table>`;
+    const mustHearHtml = `<div class="albumBlock"><div class="albumTitle">Must Hear Album</div></div>`;
+
+    const restore = mockFetch(async (input) => {
+      const url = String(input);
+      if (url.includes("/genre.php")) return new Response(genreHtml, { status: 200 });
+      if (url.includes("/songs/") || url.includes("/best-songs/")) return new Response(songHtml, { status: 200 });
+      if (url.includes("/must-hear/")) return new Response(mustHearHtml, { status: 200 });
+      return new Response("{}", { status: 200 });
+    });
+
+    try {
+      const resGenre = await worker.fetch(req("/random/genre"), env);
+      expect(resGenre.status).toBe(200);
+      expect(resGenre.headers.get("Cache-Control")).toBe("no-store");
+      const jsonGenre = (await resGenre.json()) as { genre: { name: string } };
+      expect(jsonGenre.genre.name).toBe("Rock");
+
+      const resSong = await worker.fetch(req("/random/song?period=2024"), env);
+      expect(resSong.status).toBe(200);
+      expect(resSong.headers.get("Cache-Control")).toBe("no-store");
+      const jsonSong = (await resSong.json()) as { period: string; song: { title: string } };
+      expect(jsonSong.period).toBe("2024");
+      expect(jsonSong.song.title).toBe("Song 1");
+
+      const resMustHear = await worker.fetch(req("/random/must-hear?year=2020"), env);
+      expect(resMustHear.status).toBe(200);
+      expect(resMustHear.headers.get("Cache-Control")).toBe("no-store");
+      const jsonMustHear = (await resMustHear.json()) as { album: { title: string } };
+      expect(jsonMustHear.album.title).toBe("Must Hear Album");
+
+      const resMustHearInvalid = await worker.fetch(req("/random/must-hear?year=20"), env);
+      expect(resMustHearInvalid.status).toBe(400);
+    } finally {
+      restore();
+    }
+  });
+
+  it("handles /search/all and /news/{type} routes", async () => {
+    const newsHtml = `<div class="mediaContainer" id="link1"><div class="content"><div class="title"><a href="/l/1-item/">News Title</a></div><div class="source"><a href="https://pitchfork.com">Pitchfork</a></div></div></div>`;
+    const restore = mockFetch(async () => new Response(newsHtml, { status: 200 }));
+
+    try {
+      const resNewsNew = await worker.fetch(req("/news/new"), env);
+      expect(resNewsNew.status).toBe(200);
+      const jsonNewsNew = (await resNewsNew.json()) as { type: string; page: number; items: unknown[] };
+      expect(jsonNewsNew.type).toBe("new");
+      expect(jsonNewsNew.items.length).toBe(1);
+
+      const resNewsComm = await worker.fetch(req("/news/comment"), env);
+      expect(resNewsComm.status).toBe(200);
+      const jsonNewsComm = (await resNewsComm.json()) as { type: string };
+      expect(jsonNewsComm.type).toBe("comment");
+    } finally {
+      restore();
+    }
+  });
 });
