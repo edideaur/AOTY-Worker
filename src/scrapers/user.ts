@@ -44,7 +44,7 @@ export async function scrapeUserProfile(username: string, opts: FetchOpts = FETC
   const spanM = html.match(/<h1 class="headline profile">\s*<span[^>]*>([^<]*)<\/span>/i);
   const handleM = html.match(/<h1 class="headline profile">[\s\S]*?<div[^>]*>\(([^)]+)\)<\/div>/i);
   const nameM = html.match(/<h1 class="headline profile"><span>([^<]*)<\/span><\/h1>/) ?? html.match(/<h1[^>]*>([^<]*)<\/h1>/);
-  const actualUsername = handleM?.[1]?.trim() || nameM?.[1]?.trim() || username;
+  const actualUsername = handleM?.[1] ? decodeEntities(handleM[1].trim()) : nameM?.[1] ? decodeEntities(nameM[1].trim()) : username;
   const displayName = spanM?.[1] ? decodeEntities(spanM[1].trim()) : decodeEntities(actualUsername);
 
   const userIdM = html.match(/data-(?:user-id|item-id)="(\d+)"/);
@@ -1082,7 +1082,7 @@ export async function scrapeUserGenres(
         el.onEndTag(() => {
           if (st.cur?.name) {
             genres.push({
-              name: decodeEntities(st.cur.name),
+              name: decodeEntities(st.cur.name.trim()),
               url: st.cur.url ?? "",
               count: st.cur.count ?? null,
               percentage: st.cur.percentage ?? null,

@@ -111,7 +111,7 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
     const parsed: SongCredit[] = [];
     for (const row of creditRows) {
       const roleM = row.match(/<span>\s*\/\s*([^<]+)<\/span>/);
-      const role = roleM?.[1] ? roleM[1].trim() : "";
+      const role = roleM?.[1] ? decodeEntities(roleM[1].trim()) : "";
       const artists = [...row.matchAll(/<a href="([^"]+)">([^<]*)<\/a>/g)].flatMap((m) => {
         const u = m[1];
         const n = m[2];

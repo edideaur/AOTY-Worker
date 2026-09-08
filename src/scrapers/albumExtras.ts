@@ -171,7 +171,7 @@ export async function scrapeAlbumRatingHistory(albumId: string): Promise<AlbumRa
     albumId,
     headline: decodeEntities(headline.trim()),
     milestones: milestones.map((m) => {
-      const rawM = (m.milestone ?? "").replace(m.date ?? "", "").trim();
+      const rawM = decodeEntities((m.milestone ?? "").replace(m.date ?? "", "").trim());
       return {
         milestone: rawM,
         date: (m.date ?? "").trim() || null,

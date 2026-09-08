@@ -226,7 +226,7 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
 
   const firstLabel = s.labels[0];
   const primaryLabel = firstLabel
-    ? { name: firstLabel.name.trim(), url: firstLabel.url }
+    ? { name: decodeEntities(firstLabel.name.trim()), url: firstLabel.url }
     : null;
 
   const cleanedTracks: Track[] = s.tracks
@@ -435,8 +435,8 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
     labels: s.labels.map((l) => ({ name: decodeEntities(l.name.trim()), url: l.url })),
     genres,
     secondaryGenres: [...new Set(secondaryGenres)],
-    tags: [...new Set(s.tags)],
-    vibes: [...new Set(s.vibes)],
+    tags: [...new Set(s.tags.map((t) => decodeEntities(t.trim())).filter(Boolean))],
+    vibes: [...new Set(s.vibes.map((v) => decodeEntities(v.trim())).filter(Boolean))],
     producers,
     writers,
     totalLength: s.totalLength ? s.totalLength.replace(/^Total Length:\s*/i, "").trim() : null,

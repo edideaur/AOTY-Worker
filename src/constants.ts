@@ -79,8 +79,9 @@ const NAMED_ENTITIES: Record<string, string> = {
   Iuml: "\u00CF",
   ouml: "\u00F6",
   Ouml: "\u00D6",
-  uml: "\u00FC",
+  uuml: "\u00FC",
   Uuml: "\u00DC",
+  uml: "\u00A8",
   ntilde: "\u00F1",
   Ntilde: "\u00D1",
   aring: "\u00E5",
@@ -105,13 +106,27 @@ const NAMED_ENTITIES: Record<string, string> = {
   ccedil: "\u00E7",
   Ccedil: "\u00C7",
   eth: "\u00F0",
+  ETH: "\u00D0",
   Eth: "\u00D0",
   yacute: "\u00FD",
   Yacute: "\u00DD",
+  thorn: "\u00FE",
+  THORN: "\u00DE",
   thorm: "\u00FE",
   THorn: "\u00DE",
   yuml: "\u00FF",
   Yuml: "\u0178",
+  otilde: "\u00F5",
+  Otilde: "\u00D5",
+  brvbar: "\u00A6",
+  euro: "\u20AC",
+  sbquo: "\u201A",
+  bdquo: "\u201E",
+  dagger: "\u2020",
+  Dagger: "\u2021",
+  permil: "\u2030",
+  lsaquo: "\u2039",
+  rsaquo: "\u203A",
   ordf: "\u00AA",
   ordm: "\u00BA",
   times: "\u00D7",
@@ -243,11 +258,26 @@ const NAMED_ENTITIES: Record<string, string> = {
 };
 
 export function decodeEntities(str: string): string {
-  for (let i = 0; i < 2; i++) {
+  // HTMLRewriter (Workers + Bun) hands back raw text with entities intact,
+  // so every user-visible string must pass through here.
+  // Loop until stable to unwind double-encoded values like &amp;oacute;.
+  for (let i = 0; i < 5; i++) {
     const next = str
-      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
-      .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
-      .replace(/&([a-zA-Z]+);/g, (m, name) => NAMED_ENTITIES[name] ?? NAMED_ENTITIES[name.toLowerCase()] ?? m);
+      .replace(/&#(\d+);/g, (_, n) => {
+        try {
+          return String.fromCodePoint(+n);
+        } catch {
+          return _;
+        }
+      })
+      .replace(/&#x([0-9a-f]+);/gi, (_, h) => {
+        try {
+          return String.fromCodePoint(parseInt(h, 16));
+        } catch {
+          return _;
+        }
+      })
+      .replace(/&([a-zA-Z][a-zA-Z0-9]*);/g, (m, name) => NAMED_ENTITIES[name] ?? NAMED_ENTITIES[name.toLowerCase()] ?? m);
     if (next === str) break;
     str = next;
   }

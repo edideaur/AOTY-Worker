@@ -573,7 +573,7 @@ export async function scrapePublicationPerfect(slug: string, opts: FetchOpts = F
     slug,
     sections: sections
       .map((sec) => ({
-        title: sec.title.replace(/View More/g, "").trim(),
+        title: decodeEntities(sec.title.replace(/View More/g, "").trim()),
         reviews: sec.reviews
           .filter((r) => (r.album ?? "").trim())
           .map((r) => ({

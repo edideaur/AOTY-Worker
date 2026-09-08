@@ -144,7 +144,7 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
     .arrayBuffer();
 
   return {
-    title: listTitle.trim(),
+    title: decodeEntities(listTitle.trim()),
     sourceUrl,
     items: items.map((item) => {
       const rawTitle = decodeEntities((item.title ?? "").trim());
