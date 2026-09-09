@@ -79,7 +79,7 @@ describe("entities scrapers unit tests", () => {
       expect(genres[0].name).toBe("Hip Hop");
       expect(genres[0].url).toContain("/genre/3-hip-hop/");
       expect(genres[0].albums.length).toBe(1);
-      expect(genres[0].albums[0].criticScore).toBe("90");
+      expect(genres[0].albums[0].criticScore).toBe(90);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -119,8 +119,8 @@ describe("entities scrapers unit tests", () => {
       expect(pub.name).toBe("Pitchfork");
       expect(pub.slug).toBe("1-pitchfork");
       expect(pub.website).toBe("https://pitchfork.com");
-      expect(pub.albumsRated).toBe("25,000");
-      expect(pub.averageRating).toBe("71");
+      expect(pub.albumsRated).toBe(25000);
+      expect(pub.averageRating).toBe(71);
       expect(pub.recentReviews.length).toBe(1);
       expect(pub.recentReviews[0].artist).toBe("Artist 1");
       expect(pub.topAlbums.length).toBe(1);
@@ -149,7 +149,7 @@ describe("entities scrapers unit tests", () => {
       expect(reviews.length).toBe(1);
       expect(reviews[0].artist).toBe("Artist");
       expect(reviews[0].album).toBe("Album");
-      expect(reviews[0].score).toBe("85");
+      expect(reviews[0].score).toBe(85);
       expect(reviews[0].reviewUrl).toBe("https://pitchfork.com/review");
     } finally {
       globalThis.fetch = originalFetch;
@@ -181,7 +181,7 @@ describe("entities scrapers unit tests", () => {
       expect(critic.name).toBe("Anthony Fantano");
       expect(critic.publication).toBe("The Needle Drop");
       expect(critic.reviews.length).toBe(1);
-      expect(critic.reviews[0].score).toBe("90");
+      expect(critic.reviews[0].score).toBe(90);
       expect(critic.reviews[0].date).toBe("Oct 12, 2020");
     } finally {
       globalThis.fetch = originalFetch;
@@ -200,7 +200,7 @@ describe("entities scrapers unit tests", () => {
       const tag = await scrapeTagPage("experimental", "albums", "2020");
       expect(tag.tag).toBe("experimental");
       expect(tag.type).toBe("albums");
-      expect(tag.year).toBe("2020");
+      expect(tag.year).toBe(2020);
       expect(tag.albums.length).toBe(1);
 
       // Test tag with media type
@@ -402,7 +402,7 @@ describe("entities scrapers unit tests", () => {
     try {
         globalThis.fetch = async () => new Response(html, { status: 200 });
       const res = await scrapeSubGenres("3");
-      expect(res.genreId).toBe("3");
+      expect(res.genreId).toBe(3);
       expect(res.heading).toBe("Hip Hop");
       expect(res.subgenres.length).toBe(2);
       expect(res.subgenres[0].name).toBe("Boom Bap");
@@ -418,7 +418,7 @@ describe("entities scrapers unit tests", () => {
     try {
       globalThis.fetch = async () => new Response("Rock", { status: 200 });
       const res = await scrapeGenreName("7");
-      expect(res.id).toBe("7");
+      expect(res.id).toBe(7);
       expect(res.name).toBe("Rock");
     } finally {
       globalThis.fetch = originalFetch;
@@ -435,11 +435,11 @@ describe("entities scrapers unit tests", () => {
       globalThis.fetch = async () => new Response(JSON.stringify(mockData), { status: 200 });
       const res = await scrapeGenreAutocomplete("rock");
       expect(res.length).toBe(2);
-      expect(res[0]?.id).toBe("7");
+      expect(res[0]?.id).toBe(7);
       expect(res[0]?.name).toBe("Rock & Roll");
       expect(res[0]?.slug).toBe("7-rock-roll");
       expect(res[0]?.url).toBe("https://www.albumoftheyear.org/genre/7-rock-roll/");
-      expect(res[1]?.id).toBe("29");
+      expect(res[1]?.id).toBe(29);
       expect(res[1]?.name).toBe("Post-Rock");
       expect(res[1]?.slug).toBe("29-post-rock");
       expect(res[1]?.url).toBe("https://www.albumoftheyear.org/genre/29-post-rock/");

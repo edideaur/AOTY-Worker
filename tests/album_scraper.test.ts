@@ -170,13 +170,13 @@ describe("scrapeAlbumPage unit test", () => {
 
     try {
       const album = await scrapeAlbumPage("https://www.albumoftheyear.org/album/1998-kanye-west-my-beautiful-dark-twisted-fantasy.php");
-      expect(album.id).toBe("1998");
+      expect(album.id).toBe(1998);
       expect(album.title).toBe("My Beautiful Dark Twisted Fantasy");
       expect(album.artist).toBe("Kanye West");
-      expect(album.criticScore).toBe("94");
-      expect(album.criticScoreExact).toBe("94.2");
-      expect(album.userScore).toBe("91");
-      expect(album.userScoreExact).toBe("91.1");
+      expect(album.criticScore).toBe(94);
+      expect(album.criticScoreExact).toBe(94.2);
+      expect(album.userScore).toBe(91);
+      expect(album.userScoreExact).toBe(91.1);
       expect(album.format).toBe("LP");
       expect(album.dateCreated).toBe("2010-10-01");
       expect(album.dateModified).toBe("2024-01-01");
@@ -201,7 +201,7 @@ describe("scrapeAlbumPage unit test", () => {
       expect(album.tracklist[2].title).toBe("Power");
       expect(album.reviews.length).toBe(1);
       expect(album.reviews[0].publication).toBe("Pitchfork");
-      expect(album.reviews[0].score).toBe("100");
+      expect(album.reviews[0].score).toBe(100);
       expect(album.reviews[0].text).toBe("A monumental triumph.");
       expect(album.reviews[0].date).toBe("2010-11-22");
 
@@ -213,17 +213,17 @@ describe("scrapeAlbumPage unit test", () => {
 
       expect(album.popularUserReviews.length).toBe(1);
       expect(album.popularUserReviews[0].username).toBe("User One");
-      expect(album.popularUserReviews[0].rating).toBe("95");
+      expect(album.popularUserReviews[0].rating).toBe(95);
       expect(album.popularUserReviews[0].text).toBe("Great album!");
-      expect(album.popularUserReviews[0].likes).toBe("12");
-      expect(album.popularUserReviews[0].comments).toBe("3");
+      expect(album.popularUserReviews[0].likes).toBe(12);
+      expect(album.popularUserReviews[0].comments).toBe(3);
       expect(album.popularUserReviews[0].date).toBe("Nov 23, 2010");
 
       expect(album.recentUserReviews.length).toBe(1);
       expect(album.recentUserReviews[0].username).toBe("User Two");
-      expect(album.recentUserReviews[0].rating).toBe("85");
-      expect(album.recentUserReviews[0].likes).toBe("2");
-      expect(album.recentUserReviews[0].comments).toBe("0");
+      expect(album.recentUserReviews[0].rating).toBe(85);
+      expect(album.recentUserReviews[0].likes).toBe(2);
+      expect(album.recentUserReviews[0].comments).toBe(0);
 
       expect(album.moreAlbums.length).toBe(1);
       expect(album.moreAlbums[0].title).toBe("Yeezus");
@@ -232,7 +232,7 @@ describe("scrapeAlbumPage unit test", () => {
       expect(album.similarAlbums[0].title).toBe("To Pimp a Butterfly");
 
       expect(album.yearEndLists.length).toBe(1);
-      expect(album.yearEndLists[0].rank).toBe("1");
+      expect(album.yearEndLists[0].rank).toBe(1);
       expect(album.yearEndLists[0].title).toBe("Pitchfork - Top 50 Albums of 2010");
 
       expect(album.userLists.length).toBe(1);
@@ -242,7 +242,7 @@ describe("scrapeAlbumPage unit test", () => {
       expect(album.comments.length).toBe(1);
       expect(album.comments[0].username).toBe("Commenter");
       expect(album.comments[0].text).toBe("Awesome album!");
-      expect(album.comments[0].replies).toBe("2");
+      expect(album.comments[0].replies).toBe(2);
 
       const singleGenreHtml = `
         <script type="application/ld+json">
@@ -344,7 +344,7 @@ describe("scrapeAlbumTags & scrapeAlbumCriticReviews unit test", () => {
       expect(res.sort).toBe("highest");
       expect(res.reviews.length).toBe(1);
       expect(res.reviews[0].publication).toBe("Rolling Stone");
-      expect(res.reviews[0].score).toBe("90");
+      expect(res.reviews[0].score).toBe(90);
       expect(res.reviews[0].text).toBe("Essential listening.");
       expect(res.reviews[0].date).toBe("2010-11-20");
     } finally {
@@ -387,7 +387,7 @@ describe("scrapeAlbumTags & scrapeAlbumCriticReviews unit test", () => {
         return new Response(albumHtml, { status: 200 });
       };
       const album = await scrapeRandomAlbum();
-      expect(album.id).toBe("123");
+      expect(album.id).toBe(123);
       expect(album.title).toBe("Random Album");
       expect(album.artist).toBe("Random Artist");
 
@@ -438,7 +438,7 @@ describe("scrapeAlbumTags & scrapeAlbumCriticReviews unit test", () => {
     try {
       globalThis.fetch = async () => new Response(html, { status: 200 });
       const likes = await scrapeAlbumUsers("albumLikes", "123", 0);
-      expect(likes.albumId).toBe("123");
+      expect(likes.albumId).toBe(123);
       expect(likes.type).toBe("albumLikes");
       expect(likes.users.length).toBe(1);
       expect(likes.users[0]?.username).toBe("panquesito");
@@ -458,7 +458,7 @@ describe("scrapeAlbumTags & scrapeAlbumCriticReviews unit test", () => {
     try {
       globalThis.fetch = async () => new Response(html, { status: 200 });
       const res = await scrapeAlbumImages("123");
-      expect(res.albumId).toBe("123");
+      expect(res.albumId).toBe(123);
       expect(res.mainImage).toBe("https://cdn.aoty.org/main.jpg");
       expect(res.images.length).toBe(2);
       expect(res.images[0]?.title).toBe("Front Cover");

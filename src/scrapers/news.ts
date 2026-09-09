@@ -1,12 +1,24 @@
-import { BASE, FETCH_OPTS, decodeEntities, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, decodeEntities, parseCount, parseId, type FetchOpts } from "../constants.js";
 import type { NewsItem, RssFeed, RssFeedItem } from "../types.js";
+
+type RawNewsItem = {
+  id: string;
+  url: string;
+  title: string;
+  image: string | null;
+  source: string;
+  sourceUrl: string;
+  date: string;
+  likes: string;
+  comments: string;
+};
 
 export async function scrapeNewsPage(url: string, opts: FetchOpts = FETCH_OPTS): Promise<NewsItem[]> {
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`News fetch failed: ${res.status}`);
 
-  const items: NewsItem[] = [];
-  let current: NewsItem | null = null;
+  const items: RawNewsItem[] = [];
+  let current: RawNewsItem | null = null;
 
   await new HTMLRewriter()
     .on(".mediaContainer", {
@@ -54,12 +66,15 @@ export async function scrapeNewsPage(url: string, opts: FetchOpts = FETCH_OPTS):
     .arrayBuffer();
 
   return items.map((item) => ({
-    ...item,
+    id: parseId(item.id) ?? 0,
+    url: item.url,
     title: decodeEntities((item.title ?? "").trim()),
+    image: item.image,
     source: decodeEntities((item.source ?? "").trim()),
+    sourceUrl: item.sourceUrl,
     date: (item.date ?? "").trim(),
-    likes: (item.likes ?? "").trim() || "0",
-    comments: (item.comments ?? "").trim() || "0",
+    likes: parseCount((item.likes ?? "").trim()) ?? 0,
+    comments: parseCount((item.comments ?? "").trim()) ?? 0,
   }));
 }
 

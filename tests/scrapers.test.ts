@@ -41,10 +41,10 @@ describe("scrapeAlbumBlocks unit test", () => {
     expect(a.url).toContain("/album/1998-kanye-west-my-beautiful-dark-twisted-fantasy.php");
     expect(a.mediaType).toBe("lp");
     expect(a.mustHear).toBe(true);
-    expect(a.criticScore).toBe("94");
-    expect(a.criticCount).toBe("45");
-    expect(a.userScore).toBe("91");
-    expect(a.userCount).toBe("15,200");
+    expect(a.criticScore).toBe(94);
+    expect(a.criticCount).toBe(45);
+    expect(a.userScore).toBe(91);
+    expect(a.userCount).toBe(15200);
   });
 });
 
@@ -70,11 +70,11 @@ describe("scrapeNewsPage unit test", () => {
       const news = await scrapeNewsPage("http://mock/l/");
       expect(news.length).toBe(1);
       const n = news[0];
-      expect(n.id).toBe("12345");
+      expect(n.id).toBe(12345);
       expect(n.title).toBe("Radiohead Announces New Album");
       expect(n.source).toBe("Pitchfork");
-      expect(n.likes).toBe("42");
-      expect(n.comments).toBe("18");
+      expect(n.likes).toBe(42);
+      expect(n.comments).toBe(18);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -102,13 +102,13 @@ describe("scrapeAlbumRatingHistory unit test", () => {
 
     try {
       const history = await scrapeAlbumRatingHistory("1998");
-      expect(history.albumId).toBe("1998");
+      expect(history.albumId).toBe(1998);
       expect(history.headline).toBe("Kanye West - MBDTF Score Trend");
       expect(history.milestones.length).toBe(2);
-      expect(history.milestones[0].milestone).toBe("250");
+      expect(history.milestones[0].milestone).toBe(250);
       expect(history.milestones[0].date).toBe("Apr 9, 2015*");
-      expect(history.milestones[0].score).toBe("90");
-      expect(history.milestones[0].exactScore).toBe("89.5");
+      expect(history.milestones[0].score).toBe(90);
+      expect(history.milestones[0].exactScore).toBe(89.5);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -137,12 +137,12 @@ describe("scrapeAlbumDistribution unit test", () => {
 
     try {
       const dist = await scrapeAlbumDistribution("1998");
-      expect(dist.albumId).toBe("1998");
+      expect(dist.albumId).toBe(1998);
       expect(dist.format).toBe("all");
       expect(dist.rows.length).toBe(2);
       expect(dist.rows[0].label).toBe("100");
       expect(dist.rows[0].count).toBe(10814);
-      expect(dist.rows[0].percentage).toBe("55%");
+      expect(dist.rows[0].percentage).toBe(55);
     } finally {
       globalThis.fetch = originalFetch;
     }

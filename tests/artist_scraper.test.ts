@@ -67,9 +67,9 @@ describe("artist scrapers unit tests", () => {
       const songs = await scrapeArtistTopSongs("http://mock/artist/songs");
       expect(songs.length).toBe(3);
       expect(songs[0].title).toBe("Paranoid Android");
-      expect(songs[0].score).toBe("98");
-      expect(songs[1].score).toBe("75");
-      expect(songs[2].score).toBe("50");
+      expect(songs[0].score).toBe(98);
+      expect(songs[1].score).toBe(75);
+      expect(songs[2].score).toBe(50);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -197,7 +197,7 @@ describe("artist scrapers unit tests", () => {
       const rolesRes = await listArtistCreditRoles("1-radiohead");
       expect(rolesRes.roles.length).toBe(1);
       expect(rolesRes.roles[0].role).toBe("Producer");
-      expect(rolesRes.roles[0].count).toBe("15");
+      expect(rolesRes.roles[0].count).toBe(15);
 
       const creditsAlbumHtml = `
         <div class="albumBlock"><div class="albumTitle">In Rainbows</div></div>

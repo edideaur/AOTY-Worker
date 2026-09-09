@@ -1,9 +1,8 @@
-import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, parseCount, parseScore, parseId, parseYear, type FetchOpts } from "../constants.js";
 import type {
   ArtistsOverviewSection,
   ChartItem,
   CriticDetail,
-  CriticReviewEntry,
   GenreAutocompleteItem,
   GenreDetail,
   GenreIndexItem,
@@ -88,9 +87,10 @@ export async function scrapeLabelPage(pageUrl: string, opts: FetchOpts = FETCH_O
 export async function scrapeGenresIndex(opts: FetchOpts = FETCH_OPTS): Promise<GenreIndexItem[]> {
   const res = await fetch(`${BASE}/genre.php`, opts);
   if (!res.ok) throw new Error(`Genres fetch failed: ${res.status}`);
-  const items: GenreIndexItem[] = [];
-  let cur: GenreIndexItem | null = null;
-  let curBlock: Partial<import("../types.js").AlbumBlock> | null = null;
+  type RawBlock = { url: string; artist: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean };
+  const items: Array<{ name: string; url: string; albums: RawBlock[] }> = [];
+  let cur: { name: string; url: string; albums: RawBlock[] } | null = null;
+  let curBlock: RawBlock | null = null;
   let ratingValue = "";
   let lastRatingType: "critic" | "user" | null = null;
   await new HTMLRewriter()
@@ -113,7 +113,7 @@ export async function scrapeGenresIndex(opts: FetchOpts = FETCH_OPTS): Promise<G
     .on(".albumBlock", {
       element(el) {
         curBlock = { url: "", artist: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false };
-        if (cur) cur.albums.push(curBlock as import("../types.js").AlbumBlock);
+        if (cur) cur.albums.push(curBlock);
         lastRatingType = null;
         ratingValue = "";
       },
@@ -186,19 +186,32 @@ export async function scrapeGenresIndex(opts: FetchOpts = FETCH_OPTS): Promise<G
     .map((g) => ({
       name: decodeEntities(g.name.trim()),
       url: g.url,
-      albums: g.albums.map((a) => ({ ...a, artist: decodeEntities(a.artist.trim()), title: decodeEntities(a.title.trim()), releaseDate: a.releaseDate.trim() })),
+      albums: g.albums.map((a) => ({
+        url: a.url,
+        artist: decodeEntities(a.artist.trim()),
+        title: decodeEntities(a.title.trim()),
+        cover: a.cover,
+        mediaType: a.mediaType,
+        releaseDate: a.releaseDate.trim(),
+        criticScore: parseScore(a.criticScore),
+        criticCount: parseCount(a.criticCount),
+        userScore: parseScore(a.userScore),
+        userCount: parseCount(a.userCount),
+        mustHear: a.mustHear,
+      })),
     }));
 }
 
 export async function scrapeGenrePage(pageUrl: string, slug: string, opts: FetchOpts = FETCH_OPTS, page = 1): Promise<GenreDetail> {
   const res = await fetch(pageUrl, opts);
   if (!res.ok) throw new Error(`Genre fetch failed: ${res.status}`);
+  type RawBlock = { url: string; artist: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean };
   const s = {
     name: "",
-    sections: [] as GenreSection[],
-    section: null as GenreSection | null,
-    cur: null as Partial<import("../types.js").AlbumBlock> | null,
-    artist: null as Partial<import("../types.js").SearchArtist> | null,
+    sections: [] as Array<{ title: string; url: string | null; albums: RawBlock[]; artists: Array<{ url: string; name: string; image: string | null }> }>,
+    section: null as { title: string; url: string | null; albums: RawBlock[]; artists: Array<{ url: string; name: string; image: string | null }> } | null,
+    cur: null as RawBlock | null,
+    artist: null as { url: string; name: string; image: string | null } | null,
     ratingValue: "",
     lastRatingType: null as "critic" | "user" | null,
   };
@@ -231,7 +244,7 @@ export async function scrapeGenrePage(pageUrl: string, slug: string, opts: Fetch
           s.sections.push(s.section);
         }
         s.cur = { url: "", artist: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false };
-        s.section.albums.push(s.cur as import("../types.js").AlbumBlock);
+        s.section.albums.push(s.cur);
         s.lastRatingType = null;
         s.ratingValue = "";
       },
@@ -303,7 +316,7 @@ export async function scrapeGenrePage(pageUrl: string, slug: string, opts: Fetch
           s.sections.push(s.section);
         }
         s.artist = { url: "", name: "", image: null };
-        s.section.artists.push(s.artist as import("../types.js").SearchArtist);
+        s.section.artists.push(s.artist);
       },
     })
     .on(".artistBlock a", {
@@ -326,11 +339,23 @@ export async function scrapeGenrePage(pageUrl: string, slug: string, opts: Fetch
     .transform(res)
     .arrayBuffer();
 
-  const sections = s.sections
+  const sections: GenreSection[] = s.sections
     .map((sec) => ({
       title: decodeEntities(sec.title.replace(/View More/g, "").replace(/View All/g, "").trim()),
       url: sec.url,
-      albums: sec.albums.map((a) => ({ ...a, artist: decodeEntities(a.artist.trim()), title: decodeEntities(a.title.trim()), releaseDate: a.releaseDate.trim() })),
+      albums: sec.albums.map((a) => ({
+        url: a.url,
+        artist: decodeEntities(a.artist.trim()),
+        title: decodeEntities(a.title.trim()),
+        cover: a.cover,
+        mediaType: a.mediaType,
+        releaseDate: a.releaseDate.trim(),
+        criticScore: parseScore(a.criticScore),
+        criticCount: parseCount(a.criticCount),
+        userScore: parseScore(a.userScore),
+        userCount: parseCount(a.userCount),
+        mustHear: a.mustHear,
+      })),
       artists: sec.artists.map((a) => ({ url: a.url ?? "", name: decodeEntities((a.name ?? "").trim()), image: a.image ?? null })),
     }))
     .filter((sec) => sec.albums.length > 0 || sec.artists.length > 0);
@@ -365,17 +390,18 @@ export async function scrapeGenrePage(pageUrl: string, slug: string, opts: Fetch
   return { url: pageUrl, slug, name: decodeEntities(s.name.trim()), page, sections, items, childGenres };
 }
 
-export async function scrapeTagPage(tag: string, type: string, year: string | null, opts: FetchOpts = FETCH_OPTS, page = 1): Promise<TagResults> {
+export async function scrapeTagPage(tag: string, type: string, year: string | number | null, opts: FetchOpts = FETCH_OPTS, page = 1): Promise<TagResults> {
   const slug = encodeURIComponent(tag).replace(/%20/g, "+");
+  const yearNum = year === null || year === undefined || year === "" ? null : (parseYear(year) ?? parseId(year));
   if (type === "media") {
     const mediaUrl = page > 1 ? `${BASE}/tag/${slug}/media/${page}/` : `${BASE}/tag/${slug}/media/`;
-    return { tag, type, year, page, albums: [], media: await scrapeNewsPage(mediaUrl, opts) };
+    return { tag, type, year: yearNum, page, albums: [], media: await scrapeNewsPage(mediaUrl, opts) };
   }
   let path = page > 1 ? `/tag/${slug}/albums/${page}/` : `/tag/${slug}/albums/`;
   if (year) path = page > 1 ? `/tag/${slug}/albums/year/${year}/${page}/` : `/tag/${slug}/albums/year/${year}/`;
   const res = await fetch(`${BASE}${path}`, opts);
   if (!res.ok) throw new Error(`Tag fetch failed: ${res.status}`);
-  return { tag, type, year, page, albums: await scrapeAlbumBlocks(res), media: [] };
+  return { tag, type, year: yearNum, page, albums: await scrapeAlbumBlocks(res), media: [] };
 }
 
 function scrapePublicationReviewsFromHtml(html: string): PublicationReview[] {
@@ -397,7 +423,7 @@ function scrapePublicationReviewsFromHtml(html: string): PublicationReview[] {
       album: decodeEntities((albumM[2] ?? "").trim()),
       albumUrl: BASE + albumM[1],
       cover: imgM?.[1] ?? null,
-      score: (scoreM?.[1] ?? "").trim(),
+      score: parseScore((scoreM?.[1] ?? "").trim()),
       reviewUrl: extM?.[1] ?? "",
     });
   }
@@ -492,8 +518,8 @@ export async function scrapePublicationPage(pageUrl: string, slug: string, opts:
     name: decodeEntities(s.name.trim()),
     image: s.image,
     website: s.website,
-    albumsRated: s.albumsRated || null,
-    averageRating: s.averageRating || null,
+    albumsRated: parseCount(s.albumsRated),
+    averageRating: parseScore(s.averageRating),
     ratingDistribution: s.dist,
     recentReviews: s.recentReviews,
     topAlbums: s.topAlbums,
@@ -503,9 +529,10 @@ export async function scrapePublicationPage(pageUrl: string, slug: string, opts:
 export async function scrapePublicationPerfect(slug: string, opts: FetchOpts = FETCH_OPTS): Promise<{ slug: string; sections: PerfectSection[] }> {
   const res = await fetch(`${BASE}/publication/${slug}/perfect/`, opts);
   if (!res.ok) throw new Error(`Publication perfect scores fetch failed: ${res.status}`);
-  const sections: PerfectSection[] = [];
-  let section: PerfectSection | null = null;
-  let rev: PublicationReview | null = null;
+  type RawRev = { album: string; albumUrl: string; artist: string; artistUrl: string; cover: string | null; score: string; reviewUrl: string };
+  const sections: Array<{ title: string; reviews: RawRev[] }> = [];
+  let section: { title: string; reviews: RawRev[] } | null = null;
+  let rev: RawRev | null = null;
   await new HTMLRewriter()
     .on(".sectionHeading", {
       element() {
@@ -582,7 +609,7 @@ export async function scrapePublicationPerfect(slug: string, opts: FetchOpts = F
             artist: decodeEntities((r.artist ?? "").trim()),
             artistUrl: r.artistUrl ?? "",
             cover: r.cover ?? null,
-            score: (r.score ?? "").trim(),
+            score: parseScore((r.score ?? "").trim()),
             reviewUrl: r.reviewUrl ?? "",
           })),
       }))
@@ -723,12 +750,13 @@ export async function scrapeCriticPage(pageUrl: string, slug: string, opts: Fetc
   const res = await fetch(pageUrl, opts);
   if (!res.ok) throw new Error(`Critic fetch failed: ${res.status}`);
   const pageM = pageUrl.match(/\/(\d+)\/$/);
+  type RawCriticReview = { album: string; albumUrl: string; artist: string; artistUrl: string; cover: string | null; score: string; text: string; publication: string; publicationUrl: string; date: string | null };
   const s = {
     name: "",
     publication: "",
     publicationUrl: "",
-    reviews: [] as CriticReviewEntry[],
-    rev: null as CriticReviewEntry | null,
+    reviews: [] as RawCriticReview[],
+    rev: null as RawCriticReview | null,
     revTextBuf: "",
   };
   const html = await res.clone().text();
@@ -824,7 +852,7 @@ export async function scrapeCriticPage(pageUrl: string, slug: string, opts: Fetc
         artist: decodeEntities((r.artist ?? "").trim()),
         artistUrl: r.artistUrl ?? "",
         cover: r.cover ?? null,
-        score: (r.score ?? "").trim(),
+        score: parseScore((r.score ?? "").trim()),
         text: decodeEntities((r.text ?? "").trim()),
         publication: decodeEntities((r.publication ?? "").trim()),
         publicationUrl: r.publicationUrl ?? "",
@@ -833,12 +861,12 @@ export async function scrapeCriticPage(pageUrl: string, slug: string, opts: Fetc
   };
 }
 
-export async function scrapeSubGenres(genreId: string, opts: FetchOpts = FETCH_OPTS): Promise<{ genreId: string; heading: string; subgenres: NamedLink[] }> {
+export async function scrapeSubGenres(genreId: string | number, opts: FetchOpts = FETCH_OPTS): Promise<{ genreId: number; heading: string; subgenres: NamedLink[] }> {
   const res = await fetch(`${BASE}/scripts/showSubGenres.php`, {
     ...opts,
     method: "POST",
     headers: { ...REQ_HEADERS, "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest", Referer: `${BASE}/genre.php` },
-    body: `genreID=${encodeURIComponent(genreId)}`,
+    body: `genreID=${encodeURIComponent(String(genreId))}`,
   });
   if (!res.ok) throw new Error(`Subgenres fetch failed: ${res.status}`);
   const html = await res.text();
@@ -853,17 +881,17 @@ export async function scrapeSubGenres(genreId: string, opts: FetchOpts = FETCH_O
       });
     }
   }
-  return { genreId, heading, subgenres };
+  return { genreId: parseId(genreId) ?? 0, heading, subgenres };
 }
 
 export async function scrapeGenreName(
-  genreId: string,
+  genreId: string | number,
   opts: FetchOpts = FETCH_OPTS,
-): Promise<{ id: string; name: string }> {
-  const res = await fetch(`${BASE}/scripts/getGenreName.php?id=${encodeURIComponent(genreId)}`, opts);
+): Promise<{ id: number; name: string }> {
+  const res = await fetch(`${BASE}/scripts/getGenreName.php?id=${encodeURIComponent(String(genreId))}`, opts);
   if (!res.ok) throw new Error(`Genre name fetch failed: ${res.status}`);
   const text = (await res.text()).trim();
-  return { id: genreId, name: decodeEntities(text) };
+  return { id: parseId(genreId) ?? 0, name: decodeEntities(text) };
 }
 
 export async function scrapeGenreAutocomplete(
@@ -887,7 +915,7 @@ export async function scrapeGenreAutocomplete(
     const slugM = rawLink.match(/\/genre\/([^/]+)/);
     const slug = slugM?.[1] ?? rawLink.replace(/^\/+|\/+$/g, "");
     return {
-      id: String(item["id"] ?? ""),
+      id: parseId(item["id"]),
       name: decodeEntities(String(item["value"] ?? "").trim()),
       slug,
       url: rawLink.startsWith("http") ? rawLink : `${BASE}${rawLink.startsWith("/") ? "" : "/"}${rawLink}`,

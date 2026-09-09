@@ -54,33 +54,33 @@ describe("song scrapers unit tests", () => {
     const restore = mockFetch(async () => new Response(html, { status: 200 }));
     try {
       const song = await scrapeSongPage("https://www.albumoftheyear.org/song/2580-ghost-town/");
-      expect(song.id).toBe("2580");
+      expect(song.id).toBe(2580);
       expect(song.title).toBe("Ghost Town");
       expect(song.artist).toBe("Kanye West");
-      expect(song.userScore).toBe("91");
-      expect(song.userScoreExact).toBe("90.5");
-      expect(song.ratingCount).toBe("10000");
+      expect(song.userScore).toBe(91);
+      expect(song.userScoreExact).toBe(90.5);
+      expect(song.ratingCount).toBe(10000);
       expect(song.album).toBe("ye");
-      expect(song.trackNumber).toBe("6");
-      expect(song.year).toBe("2018");
+      expect(song.trackNumber).toBe(6);
+      expect(song.year).toBe(2018);
       expect(song.duration).toBe("4:31");
       expect(song.ratingDistribution).toEqual([
         { label: "100", count: 4500 },
         { label: "90-99", count: 2300 },
       ]);
       expect(song.tags).toEqual([{ name: "Masterpiece", url: "https://www.albumoftheyear.org/tag/masterpiece/" }]);
-      expect(song.likePercentage).toBe("99%");
-      expect(song.dislikePercentage).toBe("1%");
+      expect(song.likePercentage).toBe(99);
+      expect(song.dislikePercentage).toBe(1);
       expect(song.tracklist?.length).toBe(1);
       expect(song.tracklist?.[0]?.title).toBe("Runaway");
-      expect(song.tracklist?.[0]?.score).toBe("96");
+      expect(song.tracklist?.[0]?.score).toBe(96);
       expect(song.topRatings.length).toBe(1);
       expect(song.topRatings[0]?.username).toBe("zed");
-      expect(song.topRatings[0]?.rating).toBe("100");
+      expect(song.topRatings[0]?.rating).toBe(100);
       expect(song.comments.length).toBe(1);
       expect(song.comments[0]?.username).toBe("Fan");
       expect(song.comments[0]?.text).toBe("One of Kanye's best songs!");
-      expect(song.comments[0]?.replies).toBe("5");
+      expect(song.comments[0]?.replies).toBe(5);
     } finally {
       restore();
     }
@@ -102,7 +102,7 @@ describe("song scrapers unit tests", () => {
       expect(res.page).toBe(2);
       expect(res.ratings.length).toBe(1);
       expect(res.ratings[0]?.username).toBe("fan");
-      expect(res.ratings[0]?.rating).toBe("95");
+      expect(res.ratings[0]?.rating).toBe(95);
     } finally {
       restore();
     }
@@ -131,7 +131,7 @@ describe("song scrapers unit tests", () => {
       expect(res.songs.length).toBe(1);
       expect(res.songs[0]?.title).toBe("Runaway");
       expect(res.songs[0]?.artist).toBe("Kanye West");
-      expect(res.songs[0]?.score).toBe("96");
+      expect(res.songs[0]?.score).toBe(96);
     } finally {
       restore();
     }

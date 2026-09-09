@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, cleanImageUrl, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, cleanImageUrl, parseCount, parseScore, parseExactScore, parseId, parseRank, parseTrackNumber, type FetchOpts } from "../constants.js";
 import type {
   AlbumBlock,
   AlbumDetail,
@@ -57,12 +57,12 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
     vibes: [] as string[],
     totalLength: null as string | null,
     streamingLinks: [] as StreamingLink[],
-    tracks: [] as Array<Partial<Track>>,
-    track: null as Partial<Track> | null,
+    tracks: [] as Array<{ number: string; title: string; url: string; length: string; rating: string | null; ratingCount: number | null; notes: string | null; features: string[] }>,
+    track: null as { number: string; title: string; url: string; length: string; rating: string | null; ratingCount: number | null; notes: string | null; features: string[] } | null,
     trackTitleBuf: "",
     inTrackTitle: false,
-    reviews: [] as Array<Partial<CriticReview>>,
-    review: null as Partial<CriticReview> | null,
+    reviews: [] as Array<Record<string, string>>,
+    review: null as Record<string, string> | null,
     reviewTextBuf: "",
     reviewActionCount: 0,
   };
@@ -176,7 +176,7 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
     })
     .on(".albumReviewRow", {
       element() {
-        if (s.review) s.review.text = s.reviewTextBuf.trim();
+        if (s.review) s.review["text"] = s.reviewTextBuf.trim();
         s.review = { score: "", publication: "", author: "", text: "", image: "", url: "", date: "" };
         s.reviews.push(s.review);
         s.reviewTextBuf = "";
@@ -184,42 +184,41 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
       },
     })
     .on(".albumReviewRating", {
-      text(t) { if (s.review) s.review.score += t.text; },
+      text(t) { if (s.review) s.review["score"] += t.text; },
     })
     .on(".albumReviewImage img", {
-      element(el) { if (s.review) s.review.image = el.getAttribute("src") ?? ""; },
+      element(el) { if (s.review) s.review["image"] = el.getAttribute("src") ?? ""; },
     })
     .on(".albumReviewHeader .publication a", {
-      text(t) { if (s.review) s.review.publication += t.text; },
+      text(t) { if (s.review) s.review["publication"] += t.text; },
     })
     .on(".albumReviewHeader .author a", {
-      text(t) { if (s.review) s.review.author += t.text; },
+      text(t) { if (s.review) s.review["author"] += t.text; },
     })
     .on(".albumReviewText", {
       text(t) { s.reviewTextBuf += t.text; },
     })
     .on(".albumReviewLinks .extLink a", {
-      element(el) { if (s.review) s.review.url = el.getAttribute("href") ?? ""; },
+      element(el) { if (s.review) s.review["url"] = el.getAttribute("href") ?? ""; },
     })
     .on(".albumReviewLinks .actionContainer", {
       element(el) {
         s.reviewActionCount++;
         if (s.reviewActionCount === 2 && s.review) {
-          s.review.date = el.getAttribute("title") ?? "";
+          s.review["date"] = el.getAttribute("title") ?? "";
         }
       },
     })
     .transform(res)
     .arrayBuffer();
 
-  if (s.review) s.review.text = s.reviewTextBuf.trim();
+  if (s.review) s.review["text"] = s.reviewTextBuf.trim();
   if (s.track && !s.track.title && s.trackTitleBuf) s.track.title = s.trackTitleBuf.trim();
 
   let jsonLd: Record<string, unknown> = {};
   try { jsonLd = JSON.parse(s.jsonLdText); } catch { /* ignore */ }
 
   const byArtist = jsonLd["byArtist"] as Record<string, string> | undefined;
-  const extractNum = (raw: string): string => (raw.match(/[\d,]+/) ?? [""])[0];
 
   const row = (s.detailRowTexts[1] ?? "").replace(/&nbsp;/g, " ").replace(/ /g, " ");
   const format = row.split(/\/\s*Format/i)[0]?.trim().replace(/\s+/g, " ") ?? "";
@@ -231,16 +230,19 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
 
   const cleanedTracks: Track[] = s.tracks
     .filter((t) => (t.number ?? "").trim())
-    .map((t) => ({
-      number: (t.number ?? "").trim(),
-      title: decodeEntities((t.title ?? "").trim()),
-      url: t.url ?? "",
-      length: (t.length ?? "").trim(),
-      rating: t.rating ? t.rating.trim() : null,
-      ratingCount: t.ratingCount ?? null,
-      notes: t.notes ? decodeEntities(t.notes.trim()) : null,
-      features: (t.features ?? []).map(decodeEntities),
-    }));
+    .map((t, idx) => {
+      const num = parseTrackNumber(t.number ?? "");
+      return {
+        number: num ?? idx + 1,
+        title: decodeEntities((t.title ?? "").trim()),
+        url: t.url ?? "",
+        length: (t.length ?? "").trim(),
+        rating: parseScore(t.rating ? t.rating.trim() : null),
+        ratingCount: t.ratingCount ?? null,
+        notes: t.notes ? decodeEntities(t.notes.trim()) : null,
+        features: (t.features ?? []).map(decodeEntities),
+      };
+    });
   const cleanedReviews = cleanCriticReviews(s.reviews);
   const rawGenre = jsonLd["genre"];
   const genres = Array.isArray(rawGenre) ? (rawGenre as string[]) : typeof rawGenre === "string" ? [rawGenre] : [];
@@ -369,7 +371,7 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
         const t = m[3];
         if (r && u && t) {
           yearEndLists.push({
-            rank: r,
+            rank: parseRank(r) ?? 0,
             url: u.startsWith("http") ? u : BASE + u,
             publication: decodeEntities(t.trim()),
             title: decodeEntities(t.trim()),
@@ -406,14 +408,14 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
         const textM = c.match(/<div class="commentText[^"]*">([\s\S]*?)<\/div>/);
         const repliesM = c.match(/<button class="showReplies"[^>]*>[\s\S]*?<span>(\d+)<\/span>/);
         comments.push({
-          id,
+          id: parseId(id) ?? 0,
           username: userM?.[2] ? decodeEntities(userM[2].trim()) : "",
           userUrl: userM?.[1] ? (userM[1].startsWith("http") ? userM[1] : BASE + userM[1]) : "",
           avatar: cleanImageUrl(avatarM?.[1] ?? null),
           date: dateM?.[2] ? dateM[2].trim() : "",
           dateExact: dateM?.[1] ? dateM[1].trim() : "",
           text: textM?.[1] ? decodeEntities(textM[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()) : "",
-          replies: repliesM?.[1] ? repliesM[1] : "0",
+          replies: parseCount(repliesM?.[1]) ?? 0,
         });
       }
     }
@@ -421,7 +423,7 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
 
   return {
     url: pageUrl,
-    id: s.albumId,
+    id: parseId(s.albumId),
     title: decodeEntities(String(jsonLd["name"] ?? "")),
     artist: decodeEntities(byArtist?.["name"] ?? ""),
     artistUrl: byArtist?.["url"] ? (byArtist["url"].startsWith("http") ? byArtist["url"] : `${BASE}${byArtist["url"]}`) : "",
@@ -440,13 +442,13 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
     producers,
     writers,
     totalLength: s.totalLength ? s.totalLength.replace(/^Total Length:\s*/i, "").trim() : null,
-    criticScore: s.criticScoreDisplay.trim() || null,
-    criticScoreExact: s.criticScoreExact || null,
-    criticCount: extractNum(s.criticCountRaw) || null,
+    criticScore: parseScore(s.criticScoreDisplay.trim()),
+    criticScoreExact: parseExactScore(s.criticScoreExact),
+    criticCount: parseCount(s.criticCountRaw),
     criticRanking,
-    userScore: s.userScoreDisplay.trim() || null,
-    userScoreExact: s.userScoreExact || null,
-    userCount: extractNum(s.userCountRaw) || null,
+    userScore: parseScore(s.userScoreDisplay.trim()),
+    userScoreExact: parseExactScore(s.userScoreExact),
+    userCount: parseCount(s.userCountRaw),
     userRanking,
     tracklist: cleanedTracks,
     streamingLinks: s.streamingLinks,
@@ -490,27 +492,27 @@ export function parseAlbumUserReviewRows(htmlChunk: string): UserReview[] {
       username: userM?.[2] ? decodeEntities(userM[2].trim()) : "",
       userUrl,
       avatar: cleanImageUrl(avatarM?.[1] ? avatarM[1] : null),
-      rating: ratingM?.[1] ? ratingM[1].trim() : null,
+      rating: parseScore(ratingM?.[1] ? ratingM[1].trim() : null),
       text: textM?.[1] ? decodeEntities(textM[1].replace(/<[^>]+>/g, " ").replace(/read more\s*$/i, "").replace(/\s+/g, " ").trim()) : "",
-      likes: likesM?.[1] ? likesM[1].trim() : "0",
-      comments: commentsM?.[1] ? commentsM[1].trim() : "0",
+      likes: parseCount(likesM?.[1]) ?? 0,
+      comments: parseCount(commentsM?.[1]) ?? 0,
       date: dateM?.[1] ? dateM[1].trim() : null,
     });
   }
   return reviews;
 }
 
-function cleanCriticReviews(reviews: Array<Partial<CriticReview>>): CriticReview[] {
+function cleanCriticReviews(reviews: Array<Record<string, unknown>>): CriticReview[] {
   return reviews
-    .filter((r) => (r.publication ?? "").trim())
+    .filter((r) => String((r["publication"] as string) ?? "").trim())
     .map((r) => ({
-      score: (r.score ?? "").trim(),
-      publication: decodeEntities((r.publication ?? "").trim()),
-      author: decodeEntities((r.author ?? "").trim()),
-      text: decodeEntities((r.text ?? "").trim()),
-      image: cleanImageUrl(r.image ?? ""),
-      url: r.url ?? "",
-      date: r.date ?? "",
+      score: parseScore(String((r["score"] as string) ?? "").trim()),
+      publication: decodeEntities(String((r["publication"] as string) ?? "").trim()),
+      author: decodeEntities(String((r["author"] as string) ?? "").trim()),
+      text: decodeEntities(String((r["text"] as string) ?? "").trim()),
+      image: cleanImageUrl(String((r["image"] as string) ?? "")),
+      url: String((r["url"] as string) ?? ""),
+      date: String((r["date"] as string) ?? ""),
     }));
 }
 
@@ -530,12 +532,12 @@ export async function scrapeAlbumCriticReviews(
     body,
   });
   if (!res.ok) throw new Error(`Critic reviews fetch failed: ${res.status}`);
-  const reviews: Array<Partial<CriticReview>> = [];
-  const st: { review: Partial<CriticReview> | null; textBuf: string; actionCount: number } = { review: null, textBuf: "", actionCount: 0 };
+  const reviews: Array<Record<string, string>> = [];
+  const st: { review: Record<string, string> | null; textBuf: string; actionCount: number } = { review: null, textBuf: "", actionCount: 0 };
   await new HTMLRewriter()
     .on(".albumReviewRow", {
       element() {
-        if (st.review) st.review.text = st.textBuf.trim();
+        if (st.review) st.review["text"] = st.textBuf.trim();
         st.review = { score: "", publication: "", author: "", text: "", image: "", url: "", date: "" };
         reviews.push(st.review);
         st.textBuf = "";
@@ -543,34 +545,34 @@ export async function scrapeAlbumCriticReviews(
       },
     })
     .on(".albumReviewRating", {
-      text(t) { if (st.review) st.review.score = (st.review.score ?? "") + t.text; },
+      text(t) { if (st.review) st.review["score"] = (st.review["score"] ?? "") + t.text; },
     })
     .on(".albumReviewImage img", {
-      element(el) { if (st.review) st.review.image = el.getAttribute("src") ?? ""; },
+      element(el) { if (st.review) st.review["image"] = el.getAttribute("src") ?? ""; },
     })
     .on(".albumReviewHeader .publication a", {
-      text(t) { if (st.review) st.review.publication = (st.review.publication ?? "") + t.text; },
+      text(t) { if (st.review) st.review["publication"] = (st.review["publication"] ?? "") + t.text; },
     })
     .on(".albumReviewHeader .author a", {
-      text(t) { if (st.review) st.review.author = (st.review.author ?? "") + t.text; },
+      text(t) { if (st.review) st.review["author"] = (st.review["author"] ?? "") + t.text; },
     })
     .on(".albumReviewText", {
       text(t) { st.textBuf += t.text; },
     })
     .on(".albumReviewLinks .extLink a", {
-      element(el) { if (st.review) st.review.url = el.getAttribute("href") ?? ""; },
+      element(el) { if (st.review) st.review["url"] = el.getAttribute("href") ?? ""; },
     })
     .on(".albumReviewLinks .actionContainer", {
       element(el) {
         st.actionCount++;
         if (st.actionCount === 2 && st.review) {
-          st.review.date = el.getAttribute("title") ?? "";
+          st.review["date"] = el.getAttribute("title") ?? "";
         }
       },
     })
     .transform(res)
     .arrayBuffer();
-  if (st.review) st.review.text = st.textBuf.trim();
+  if (st.review) st.review["text"] = st.textBuf.trim();
   return { slug, sort, reviews: cleanCriticReviews(reviews) };
 }
 

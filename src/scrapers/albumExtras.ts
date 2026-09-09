@@ -1,10 +1,9 @@
-import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, parseCount, parseScore, parseExactScore, parseId, parsePercent, type FetchOpts } from "../constants.js";
 import type {
   AlbumStats,
   CreditEntry,
   CreditSection,
   AlbumRatingHistory,
-  AlbumRatingMilestone,
   AlbumDistribution,
   AlbumDistributionRow,
   AlbumUserItem,
@@ -18,12 +17,12 @@ const EXTRAS_HEADERS: HeadersInit = {
   "X-Requested-With": "XMLHttpRequest",
 };
 
-export async function scrapeAlbumStats(albumId: string): Promise<AlbumStats | null> {
+export async function scrapeAlbumStats(albumId: string | number): Promise<AlbumStats | null> {
   try {
     const res = await fetch(`${BASE}/scripts/moreStatsAlbum.php`, {
       method: "POST",
       headers: EXTRAS_HEADERS,
-      body: `albumID=${albumId}`,
+      body: `albumID=${String(albumId)}`,
     });
     if (!res.ok) return null;
     const text = await res.text();
@@ -43,12 +42,12 @@ export async function scrapeAlbumStats(albumId: string): Promise<AlbumStats | nu
   }
 }
 
-export async function scrapeAlbumCredits(albumId: string): Promise<CreditSection[] | null> {
+export async function scrapeAlbumCredits(albumId: string | number): Promise<CreditSection[] | null> {
   try {
     const res = await fetch(`${BASE}/scripts/showAlbumCredits.php`, {
       method: "POST",
       headers: EXTRAS_HEADERS,
-      body: `albumID=${albumId}`,
+      body: `albumID=${String(albumId)}`,
     });
     if (!res.ok) return null;
 
@@ -128,8 +127,8 @@ export async function scrapeAlbumRatingHistory(albumId: string): Promise<AlbumRa
   });
   if (!res.ok) throw new Error(`Rating history fetch failed: ${res.status}`);
 
-  const milestones: AlbumRatingMilestone[] = [];
-  let cur: AlbumRatingMilestone | null = null;
+  const rawMilestones: Array<{ milestone: string; date: string | null; score: string; exactScore: string | null }> = [];
+  let cur: { milestone: string; date: string | null; score: string; exactScore: string | null } | null = null;
   let headline = "";
 
   await new HTMLRewriter()
@@ -141,7 +140,7 @@ export async function scrapeAlbumRatingHistory(albumId: string): Promise<AlbumRa
     .on(".ratingHistoryTable tr", {
       element() {
         cur = { milestone: "", date: null, score: "", exactScore: null };
-        milestones.push(cur);
+        rawMilestones.push(cur);
       },
     })
     .on(".ratingHistoryTable .historyLabel", {
@@ -168,25 +167,25 @@ export async function scrapeAlbumRatingHistory(albumId: string): Promise<AlbumRa
     .arrayBuffer();
 
   return {
-    albumId,
+    albumId: parseId(albumId) ?? 0,
     headline: decodeEntities(headline.trim()),
-    milestones: milestones.map((m) => {
+    milestones: rawMilestones.map((m) => {
       const rawM = decodeEntities((m.milestone ?? "").replace(m.date ?? "", "").trim());
       return {
-        milestone: rawM,
+        milestone: parseCount(rawM) ?? 0,
         date: (m.date ?? "").trim() || null,
-        score: (m.score ?? "").trim(),
-        exactScore: m.exactScore ? m.exactScore.trim() : null,
+        score: parseScore((m.score ?? "").trim()),
+        exactScore: m.exactScore ? parseExactScore(m.exactScore.trim()) : null,
       };
     }),
   };
 }
 
-export async function scrapeAlbumDistribution(albumId: string, format = "all"): Promise<AlbumDistribution> {
+export async function scrapeAlbumDistribution(albumId: string | number, format = "all"): Promise<AlbumDistribution> {
   const res = await fetch(`${BASE}/scripts/changeDistribution.php`, {
     method: "POST",
     headers: EXTRAS_HEADERS,
-    body: new URLSearchParams({ type: "album", format, itemID: albumId }).toString(),
+    body: new URLSearchParams({ type: "album", format, itemID: String(albumId) }).toString(),
   });
   if (!res.ok) throw new Error(`Album distribution fetch failed: ${res.status}`);
 
@@ -227,15 +226,15 @@ export async function scrapeAlbumDistribution(albumId: string, format = "all"): 
     .on(".distRow .distBar", {
       element(el) {
         const style = el.getAttribute("style") ?? "";
-        const match = style.match(/width:\s*(\d+%)/);
-        if (cur && match?.[1]) cur.percentage = match[1];
+        const match = style.match(/width:\s*([\d.]+%)/);
+        if (cur && match?.[1]) cur.percentage = parsePercent(match[1]);
       },
     })
     .transform(res)
     .arrayBuffer();
 
   return {
-    albumId,
+    albumId: parseId(albumId) ?? 0,
     format,
     rows,
   };
@@ -243,15 +242,15 @@ export async function scrapeAlbumDistribution(albumId: string, format = "all"): 
 
 export async function scrapeAlbumUsers(
   type: "albumLikes" | "albumLibrary",
-  albumId: string,
+  albumId: string | number,
   start = 0,
   opts: FetchOpts = FETCH_OPTS,
-): Promise<{ albumId: string; type: string; start: number; users: AlbumUserItem[] }> {
+): Promise<{ albumId: number; type: string; start: number; users: AlbumUserItem[] }> {
   const res = await fetch(`${BASE}/scripts/showMore.php`, {
     ...opts,
     method: "POST",
     headers: EXTRAS_HEADERS,
-    body: new URLSearchParams({ type, albumID: albumId, start: String(start) }).toString(),
+    body: new URLSearchParams({ type, albumID: String(albumId), start: String(start) }).toString(),
   });
   if (!res.ok) throw new Error(`Album ${type} fetch failed: ${res.status}`);
   const html = await res.text();
@@ -270,11 +269,11 @@ export async function scrapeAlbumUsers(
       });
     }
   }
-  return { albumId, type, start, users };
+  return { albumId: parseId(albumId) ?? 0, type, start, users };
 }
 
 export async function scrapeAlbumImages(
-  albumId: string,
+  albumId: string | number,
   opts: FetchOpts = FETCH_OPTS,
 ): Promise<AlbumImagesResult> {
   const res = await fetch(`${BASE}/scripts/showImage.php`, {
@@ -298,7 +297,7 @@ export async function scrapeAlbumImages(
     const title = m[5];
     if (id && src) {
       images.push({
-        id,
+        id: parseId(id) ?? 0,
         title: decodeEntities(title || alt || ""),
         src,
         isDefault: classes?.includes("selected") ?? false,
@@ -307,7 +306,7 @@ export async function scrapeAlbumImages(
   }
 
   return {
-    albumId,
+    albumId: parseId(albumId) ?? 0,
     mainImage,
     images,
   };

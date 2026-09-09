@@ -23,7 +23,7 @@ describe("scrapeRatingsChart unit test", () => {
       const items = await scrapeRatingsChart("/ratings/6-highest-rated/1997/1");
       expect(items.length).toBe(1);
       const item = items[0]!;
-      expect(item.rank).toBe("1");
+      expect(item.rank).toBe(1);
       expect(item.title).toBe("Radiohead - OK Computer");
       expect(item.artist).toBe("Radiohead");
       expect(item.album).toBe("OK Computer");
@@ -31,9 +31,9 @@ describe("scrapeRatingsChart unit test", () => {
       expect(item.cover).toBe("https://cdn.aoty.org/cov1.jpg");
       expect(item.date).toBe("May 21, 1997");
       expect(item.genres).toEqual(["Art Rock", "Alternative Rock"]);
-      expect(item.score).toBe("95");
-      expect(item.scoreExact).toBe("94.6");
-      expect(item.ratingCount).toBe("12,000");
+      expect(item.score).toBe(95);
+      expect(item.scoreExact).toBe(94.6);
+      expect(item.ratingCount).toBe(12000);
       expect(item.mustHear).toBe(true);
     } finally {
       restore();
@@ -74,7 +74,7 @@ describe("scrapeTopArtists unit test", () => {
     const restore = mockFetch(async () => new Response(html, { status: 200 }));
     try {
       const res = await scrapeRatingSources("2026");
-      expect(res.year).toBe("2026");
+      expect(res.year).toBe(2026);
       expect(res.sources.length).toBe(2);
       expect(res.sources[0]?.name).toBe("A.V. Club");
       expect(res.sources[0]?.slug).toBe("12-av-club-highest-rated");
@@ -95,9 +95,9 @@ describe("scrapeTopArtists unit test", () => {
     const restore = mockFetch(async () => new Response(html, { status: 200 }));
     try {
       const res = await scrapeRatingGenres("2026");
-      expect(res.year).toBe("2026");
+      expect(res.year).toBe(2026);
       expect(res.genres.length).toBe(2);
-      expect(res.genres[0]?.id).toBe("441");
+      expect(res.genres[0]?.id).toBe(441);
       expect(res.genres[0]?.slug).toBe("441-alt-pop");
       expect(res.genres[0]?.name).toBe("Alt-Pop");
       expect(res.genres[1]?.name).toBe("Rock");

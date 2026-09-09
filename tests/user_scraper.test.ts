@@ -65,10 +65,10 @@ describe("user scrapers unit tests", () => {
       const profile = await scrapeUserProfile("musicgeek");
       expect(profile.username).toBe("musicgeek");
       expect(profile.displayName).toBe("Music Geek");
-      expect(profile.userId).toBe("512173");
+      expect(profile.userId).toBe(512173);
       expect(profile.memberSince).toBe("January 27, 2025");
       expect(profile.yearEndLists).toEqual([2025]);
-      expect(profile.pinnedReview?.rating).toBe("100");
+      expect(profile.pinnedReview?.rating).toBe(100);
       expect(profile.avatar).toBe("https://cdn.aoty.org/avatar.jpg");
       expect(profile.bio).toBe("Music obsessive and vinyl collector.");
       expect(profile.location).toBe("Chicago, IL");
@@ -80,11 +80,11 @@ describe("user scrapers unit tests", () => {
       ]);
       expect(profile.favorites.length).toBe(1);
       expect(profile.favorites[0].title).toBe("In Rainbows");
-      expect(profile.stats.ratings).toBe("1,250");
-      expect(profile.stats.reviews).toBe("45");
-      expect(profile.stats.lists).toBe("12");
-      expect(profile.stats.followers).toBe("300");
-      expect(profile.stats.following).toBe("150");
+      expect(profile.stats.ratings).toBe(1250);
+      expect(profile.stats.reviews).toBe(45);
+      expect(profile.stats.lists).toBe(12);
+      expect(profile.stats.followers).toBe(300);
+      expect(profile.stats.following).toBe(150);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -123,7 +123,7 @@ describe("user scrapers unit tests", () => {
       expect(res.ratings.length).toBe(1);
       expect(res.ratings[0].artist).toBe("Radiohead");
       expect(res.ratings[0].title).toBe("OK Computer");
-      expect(res.ratings[0].userRating).toBe("100");
+      expect(res.ratings[0].userRating).toBe(100);
       expect(res.ratings[0].mustHear).toBe(true);
       expect(res.ratings[0].reviewUrl).toBe("https://www.albumoftheyear.org/user/musicgeek/album/1-okc/");
     } finally {
@@ -191,7 +191,7 @@ describe("user scrapers unit tests", () => {
       expect(tags.scope).toBe("albums");
       expect(tags.tags.length).toBe(1);
       expect(tags.tags[0].tag).toBe("Favorite");
-      expect(tags.tags[0].count).toBe("42");
+      expect(tags.tags[0].count).toBe(42);
 
       const tagDetail = await scrapeUserTagDetail("musicgeek", "favorite", "date", undefined, 2);
       expect(tagDetail.tag).toBe("favorite");
@@ -251,9 +251,9 @@ describe("user scrapers unit tests", () => {
       expect(globalReviews.reviews.length).toBe(1);
       expect(globalReviews.reviews[0].artist).toBe("Great Artist");
       expect(globalReviews.reviews[0].album).toBe("Great Album");
-      expect(globalReviews.reviews[0].rating).toBe("90");
-      expect(globalReviews.reviews[0].likes).toBe("15");
-      expect(globalReviews.reviews[0].comments).toBe("3");
+      expect(globalReviews.reviews[0].rating).toBe(90);
+      expect(globalReviews.reviews[0].likes).toBe(15);
+      expect(globalReviews.reviews[0].comments).toBe(3);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -288,10 +288,10 @@ describe("user scrapers unit tests", () => {
       const userReviews = await scrapeUserReviewsPage("musicgeek", 1, "recent");
       expect(userReviews.reviews.length).toBe(2);
       expect(userReviews.reviews[0].album).toBe("Great Album");
-      expect(userReviews.reviews[0].rating).toBe("85");
+      expect(userReviews.reviews[0].rating).toBe(85);
       expect(userReviews.reviews[0].text).toBe("Personal favorite.");
       expect(userReviews.reviews[1].album).toBe("Second Album");
-      expect(userReviews.reviews[1].rating).toBe("90");
+      expect(userReviews.reviews[1].rating).toBe(90);
 
       const albumReviews = await scrapeAlbumUserReviews("100-album", "recent", 1);
       expect(albumReviews.reviews.length).toBe(2);
@@ -340,15 +340,15 @@ describe("user scrapers unit tests", () => {
       const detail = await scrapeUserReviewDetail("musicgeek", "100-great-album");
       expect(detail.artist).toBe("Great Artist");
       expect(detail.album).toBe("Great Album");
-      expect(detail.rating).toBe("95");
+      expect(detail.rating).toBe(95);
       expect(detail.text).toBe("Deeply moving soundscapes.");
-      expect(detail.likes).toBe("42");
-      expect(detail.comments).toBe("7");
+      expect(detail.likes).toBe(42);
+      expect(detail.comments).toBe(7);
       expect(detail.date).toBe("2024-05-01");
-      expect(detail.albumId).toBe("100");
+      expect(detail.albumId).toBe(100);
       expect(detail.trackRatings.length).toBe(1);
       expect(detail.trackRatings[0].title).toBe("Intro");
-      expect(detail.trackRatings[0].rating).toBe("90");
+      expect(detail.trackRatings[0].rating).toBe(90);
       expect(detail.streamingLinks?.length).toBe(1);
       expect(detail.streamingLinks?.[0]?.platform).toBe("Spotify");
       expect(detail.previousReview?.title).toBe("Previous Album");
@@ -382,8 +382,8 @@ describe("user scrapers unit tests", () => {
       expect(userLists.lists.length).toBe(1);
       expect(userLists.lists[0].title).toBe("Top 10 of All Time");
       expect(userLists.lists[0].covers.length).toBe(2);
-      expect(userLists.lists[0].likes).toBe("25");
-      expect(userLists.lists[0].comments).toBe("4");
+      expect(userLists.lists[0].likes).toBe(25);
+      expect(userLists.lists[0].comments).toBe(4);
 
       const userListsP1 = await scrapeUserLists("musicgeek");
       expect(userListsP1.page).toBe(1);
@@ -421,7 +421,7 @@ describe("user scrapers unit tests", () => {
       expect(listDetail.items.length).toBe(1);
       expect(listDetail.items[0].artist).toBe("Radiohead");
       expect(listDetail.items[0].title).toBe("OK Computer");
-      expect(listDetail.items[0].year).toBe("1997");
+      expect(listDetail.items[0].year).toBe(1997);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -449,8 +449,8 @@ describe("user scrapers unit tests", () => {
       expect(res.genres[0]?.name).toBe("Rock");
       expect(res.genres[0]?.url).toContain("/genre/1-rock/");
       expect(res.genres[0]?.count).toBe(142);
-      expect(res.genres[0]?.percentage).toBe("25%");
-      expect(res.genres[0]?.averageScore).toBe("85");
+      expect(res.genres[0]?.percentage).toBe(25);
+      expect(res.genres[0]?.averageScore).toBe(85);
       expect(res.genres[1]?.name).toBe("Hip Hop");
       expect(res.genres[1]?.count).toBe(98);
     } finally {
@@ -557,7 +557,7 @@ describe("user scrapers unit tests", () => {
       expect(res.rows.length).toBe(2);
       expect(res.rows[0]?.label).toBe("100");
       expect(res.rows[0]?.count).toBe(20);
-      expect(res.rows[0]?.percentage).toBe("50%");
+      expect(res.rows[0]?.percentage).toBe(50);
     } finally {
       restore();
     }
@@ -600,14 +600,14 @@ describe("user scrapers unit tests", () => {
     try {
       const res = await scrapeUserArtistRatings("512173", "2255");
       expect(res.username).toBe("512173");
-      expect(res.artistId).toBe("2255");
+      expect(res.artistId).toBe(2255);
       expect(calledBody).toContain("userID=512173");
       expect(calledBody).toContain("artistID=2255");
       expect(res.ratings.length).toBe(1);
       expect(res.ratings[0]?.rank).toBe(1);
       expect(res.ratings[0]?.album).toBe("BRAT");
-      expect(res.ratings[0]?.year).toBe("2024");
-      expect(res.ratings[0]?.score).toBe("100");
+      expect(res.ratings[0]?.year).toBe(2024);
+      expect(res.ratings[0]?.score).toBe(100);
       expect(res.ratings[0]?.reviewUrl).toContain("/user/musicgeek/album/887267-brat/");
     } finally {
       restore();
@@ -634,17 +634,17 @@ describe("user scrapers unit tests", () => {
     try {
       const res = await scrapeUserAlbumTrackRatings("512173", "1535377");
       expect(res.username).toBe("512173");
-      expect(res.albumId).toBe("1535377");
+      expect(res.albumId).toBe(1535377);
       expect(res.artist).toBe("Hilary Duff");
       expect(res.album).toBe("luck… or something");
       expect(res.cover).toBe("https://cdn.aoty.org/c.jpg");
       expect(calledBody).toContain("albumID=1535377");
       expect(calledBody).toContain("userID=512173");
       expect(res.tracks.length).toBe(1);
-      expect(res.tracks[0]?.number).toBe("1");
+      expect(res.tracks[0]?.number).toBe(1);
       expect(res.tracks[0]?.title).toBe("Weather for Tennis");
       expect(res.tracks[0]?.length).toBe("3:16");
-      expect(res.tracks[0]?.score).toBe("100");
+      expect(res.tracks[0]?.score).toBe(100);
     } finally {
       restore();
     }

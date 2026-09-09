@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, parseCount, parseScore, parseRank, type FetchOpts } from "../constants.js";
 import type { AlbumBlock, ArtistDetail, DiscographySection, NewsItem, SearchArtist, TopSong } from "../types.js";
 import { scrapeAlbumBlocks } from "./albumBlock.js";
 import { scrapeNewsPage } from "./news.js";
@@ -46,8 +46,8 @@ export async function scrapeSimilarArtists(slug: string, opts: FetchOpts = FETCH
 export async function scrapeArtistTopSongs(url: string, opts: FetchOpts = FETCH_OPTS): Promise<TopSong[]> {
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`Artist songs fetch failed: ${res.status}`);
-  const songs: TopSong[] = [];
-  let cur: TopSong | null = null;
+  const songs: Array<{ rank: string; title: string; url: string; artist: string; artistUrl: string; album: string | null; albumUrl: string | null; cover: string | null; score: string | null; ratingCount: string | null }> = [];
+  let cur: { rank: string; title: string; url: string; artist: string; artistUrl: string; album: string | null; albumUrl: string | null; cover: string | null; score: string | null; ratingCount: string | null } | null = null;
   let inSongCell = false;
   let songLinkKind: "song" | "artist" | "album" | null = null;
   await new HTMLRewriter()
@@ -113,8 +113,8 @@ export async function scrapeArtistTopSongs(url: string, opts: FetchOpts = FETCH_
   void inSongCell;
   return songs
     .filter((s) => (s.title ?? "").trim())
-    .map((s) => ({
-      rank: (s.rank ?? "").replace(".", "").trim(),
+    .map((s, idx) => ({
+      rank: parseRank((s.rank ?? "").replace(".", "").trim()) ?? idx + 1,
       title: decodeEntities((s.title ?? "").trim()),
       url: s.url ?? "",
       artist: decodeEntities((s.artist ?? "").trim()),
@@ -122,8 +122,8 @@ export async function scrapeArtistTopSongs(url: string, opts: FetchOpts = FETCH_
       album: s.album ? decodeEntities((s.album as string).trim()) : null,
       albumUrl: s.albumUrl ?? null,
       cover: s.cover ?? null,
-      score: (s.score ?? "").trim() || null,
-      ratingCount: (s.ratingCount ?? "").trim() || null,
+      score: parseScore((s.score ?? "").trim()),
+      ratingCount: parseCount((s.ratingCount ?? "").trim()),
     }));
 }
 
@@ -149,12 +149,12 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     website: null as string | null,
     detailLinkBuf: null as { name: string; url: string } | null,
     detailLinkKind: null as "member" | "former" | "genre" | null,
-    sections: [] as DiscographySection[],
-    section: null as DiscographySection | null,
+    sections: [] as Array<{ title: string; albums: Array<{ url: string; artist: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean }> }>,
+    section: null as { title: string; albums: Array<{ url: string; artist: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean }> } | null,
     similarArtists: [] as SearchArtist[],
     simCurrent: null as SearchArtist | null,
-    topSongs: [] as TopSong[],
-    songCurrent: null as TopSong | null,
+    topSongs: [] as Array<{ rank: string; title: string; url: string; artist: string; artistUrl: string; album: string | null; albumUrl: string | null; cover: string | null; score: string | null; ratingCount: string | null }>,
+    songCurrent: null as { rank: string; title: string; url: string; artist: string; artistUrl: string; album: string | null; albumUrl: string | null; cover: string | null; score: string | null; ratingCount: string | null } | null,
     songLinkKind: null as "song" | "artist" | "album" | null,
   };
 
@@ -375,9 +375,10 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
   }
 
   // Discography sections: scrape album blocks per section with a section-aware pass.
-  const sections: DiscographySection[] = [];
-  let curSection: DiscographySection | null = null;
-  let cur: Partial<import("../types.js").AlbumBlock> | null = null;
+  type RawBlock = { url: string; artist: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean };
+  const sections: Array<{ title: string; albums: RawBlock[] }> = [];
+  let curSection: { title: string; albums: RawBlock[] } | null = null;
+  let cur: RawBlock | null = null;
   let ratingValue = "";
   let lastRatingType: "critic" | "user" | null = null;
   await new HTMLRewriter()
@@ -393,7 +394,7 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     .on(".albumBlock", {
       element(el) {
         cur = { url: "", artist: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false };
-        if (curSection) curSection.albums.push(cur as import("../types.js").AlbumBlock);
+        if (curSection) curSection.albums.push(cur);
         lastRatingType = null;
         ratingValue = "";
       },
@@ -461,29 +462,55 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     .transform(new Response(html))
     .arrayBuffer();
 
-  for (const sec of sections) {
-    sec.title = sec.title.replace(/View All/g, "").trim();
-    for (const a of sec.albums) {
-      a.artist = decodeEntities(a.artist.trim()) || decodeEntities(s.name.trim());
-      a.title = decodeEntities(a.title.trim());
-      a.releaseDate = a.releaseDate.trim();
+  const cleanedSections: DiscographySection[] = sections.map((sec) => ({
+    title: sec.title.replace(/View All/g, "").trim(),
+    albums: sec.albums.map((a) => ({
+      url: a.url,
+      artist: decodeEntities(a.artist.trim()) || decodeEntities(s.name.trim()),
+      title: decodeEntities(a.title.trim()),
+      cover: a.cover,
+      mediaType: a.mediaType,
+      releaseDate: a.releaseDate.trim(),
+      criticScore: parseScore(a.criticScore),
+      criticCount: parseCount(a.criticCount),
+      userScore: parseScore(a.userScore),
+      userCount: parseCount(a.userCount),
+      mustHear: a.mustHear,
+    })),
+  }));
+
+  // Merge section-aware blocks with the earlier h2 pass (s.sections holds raw too)
+  for (const sec of s.sections) {
+    const existing = cleanedSections.find((x) => x.title === sec.title.replace(/View All/g, "").trim());
+    if (!existing && (sec.title || sec.albums.length)) {
+      cleanedSections.push({
+        title: sec.title.replace(/View All/g, "").trim(),
+        albums: sec.albums.map((a) => ({
+          url: a.url,
+          artist: decodeEntities(a.artist.trim()) || decodeEntities(s.name.trim()),
+          title: decodeEntities(a.title.trim()),
+          cover: a.cover,
+          mediaType: a.mediaType,
+          releaseDate: a.releaseDate.trim(),
+          criticScore: parseScore(a.criticScore),
+          criticCount: parseCount(a.criticCount),
+          userScore: parseScore(a.userScore),
+          userCount: parseCount(a.userCount),
+          mustHear: a.mustHear,
+        })),
+      });
     }
   }
-
-  const num = (raw: string): string | null => {
-    const m = raw.replace(/,/g, "").match(/[\d,]+/);
-    return m ? m[0].replace(/,/g, "") : null;
-  };
 
   return {
     url: pageUrl,
     name: decodeEntities(s.name.trim()),
     image: s.image,
-    criticScore: s.criticScore.trim() || null,
-    criticCount: num(s.criticCount),
-    userScore: s.userScore.trim() || null,
-    userCount: num(s.userCount),
-    followers: s.followers.replace(/Followers/i, "").trim() || null,
+    criticScore: parseScore(s.criticScore.trim()),
+    criticCount: parseCount(s.criticCount),
+    userScore: parseScore(s.userScore.trim()),
+    userCount: parseCount(s.userCount),
+    followers: parseCount(s.followers.replace(/Followers/i, "").trim()),
     genres,
     alsoKnownAs: aka,
     members,
@@ -493,11 +520,11 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     relatedArtists,
     tags,
     website,
-    sections: sections.filter((x) => x.title || x.albums.length),
+    sections: cleanedSections.filter((x) => x.title || x.albums.length),
     topSongs: s.topSongs
       .filter((song) => (song.title ?? "").trim())
-      .map((song) => ({
-        rank: (song.rank ?? "").replace(".", "").trim(),
+      .map((song, idx) => ({
+        rank: parseRank((song.rank ?? "").replace(".", "").trim()) ?? idx + 1,
         title: decodeEntities((song.title ?? "").trim()),
         url: song.url ?? "",
         artist: decodeEntities((song.artist ?? "").trim()) || decodeEntities(s.name.trim()),
@@ -505,8 +532,8 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
         album: song.album ? decodeEntities((song.album as string).trim()) : null,
         albumUrl: song.albumUrl ?? null,
         cover: song.cover ?? null,
-        score: (song.score ?? "").trim() || null,
-        ratingCount: (song.ratingCount ?? "").trim() || null,
+        score: parseScore((song.score ?? "").trim()),
+        ratingCount: parseCount((song.ratingCount ?? "").trim()),
       })),
     similarArtists: s.similarArtists.map((a) => ({ ...a, name: decodeEntities((a.name ?? "").trim()) })),
   };
@@ -536,7 +563,7 @@ export interface ArtistCreditRole {
   role: string;
   albumClass: string;
   songClass: string;
-  count: string | null;
+  count: number | null;
 }
 
 export async function listArtistCreditRoles(slug: string, opts: FetchOpts = FETCH_OPTS): Promise<{ slug: string; roles: ArtistCreditRole[] }> {
@@ -554,7 +581,7 @@ export async function listArtistCreditRoles(slug: string, opts: FetchOpts = FETC
       role: decodeEntities(name.trim()),
       albumClass: get("album-class"),
       songClass: get("song-class"),
-      count: countRaw ? countRaw.trim() || null : null,
+      count: countRaw ? (parseCount(countRaw.trim())) : null,
     });
   }
   return { slug, roles };

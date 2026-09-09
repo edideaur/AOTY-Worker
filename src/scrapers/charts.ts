@@ -1,7 +1,18 @@
-import { BASE, FETCH_OPTS, decodeEntities, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, decodeEntities, parseCount, parseId, parseRank, parseScore, parseExactScore, type FetchOpts } from "../constants.js";
 import type { ChartItem, RatingGenresResult, RatingSourcesResult, SearchArtist } from "../types.js";
 
-type RawChartItem = Omit<ChartItem, "artist" | "album">;
+type RawChartItem = {
+  rank: string;
+  title: string;
+  url: string;
+  cover: string | null;
+  date: string | null;
+  genres: string[];
+  score: string | null;
+  scoreExact: string | null;
+  ratingCount: string | null;
+  mustHear: boolean;
+};
 
 export async function scrapeRatingsChart(aotyPath: string, opts: FetchOpts = FETCH_OPTS): Promise<ChartItem[]> {
   const res = await fetch(`${BASE}${aotyPath}`, opts);
@@ -79,13 +90,13 @@ export async function scrapeRatingsChart(aotyPath: string, opts: FetchOpts = FET
     .transform(res)
     .arrayBuffer();
 
-  return items.map((i) => {
+  return items.map((i, idx) => {
     const rawTitle = decodeEntities((i.title ?? "").trim());
     const dashIdx = rawTitle.indexOf(" - ");
     const artist = dashIdx > -1 ? rawTitle.slice(0, dashIdx).trim() : "";
     const album = dashIdx > -1 ? rawTitle.slice(dashIdx + 3).trim() : rawTitle;
     return {
-      rank: (i.rank ?? "").trim(),
+      rank: parseRank((i.rank ?? "").trim()) ?? idx + 1,
       artist,
       album,
       title: rawTitle,
@@ -93,9 +104,9 @@ export async function scrapeRatingsChart(aotyPath: string, opts: FetchOpts = FET
       cover: i.cover ?? null,
       date: (i.date ?? "").trim() || null,
       genres: [...new Set((i.genres ?? []).map((g) => decodeEntities(g.trim())).filter(Boolean))],
-      score: (i.score ?? "").trim() || null,
-      scoreExact: i.scoreExact ?? null,
-      ratingCount: (i.ratingCount ?? "").replace(/ratings?/i, "").trim() || null,
+      score: parseScore((i.score ?? "").trim()),
+      scoreExact: parseExactScore(i.scoreExact),
+      ratingCount: parseCount((i.ratingCount ?? "").replace(/ratings?/i, "").trim()),
       mustHear: i.mustHear ?? false,
     };
   });
@@ -139,7 +150,7 @@ export async function scrapeTopArtists(genre: string | null, scope: string, opts
 }
 
 export async function scrapeRatingSources(
-  year = String(new Date().getFullYear()),
+  year: string | number = new Date().getFullYear(),
   opts: FetchOpts = FETCH_OPTS,
 ): Promise<RatingSourcesResult> {
   const res = await fetch(`${BASE}/scripts/sourceSelect.php`, {
@@ -150,7 +161,7 @@ export async function scrapeRatingSources(
       "Content-Type": "application/x-www-form-urlencoded",
       "X-Requested-With": "XMLHttpRequest",
     },
-    body: new URLSearchParams({ year, sourceID: "6" }).toString(),
+    body: new URLSearchParams({ year: String(year), sourceID: "6" }).toString(),
   });
   if (!res.ok) throw new Error(`Rating sources fetch failed: ${res.status}`);
   const html = await res.text();
@@ -167,11 +178,11 @@ export async function scrapeRatingSources(
       });
     }
   }
-  return { year, sources };
+  return { year: parseId(year) ?? new Date().getFullYear(), sources };
 }
 
 export async function scrapeRatingGenres(
-  year = String(new Date().getFullYear()),
+  year: string | number = new Date().getFullYear(),
   type = "criticHighestRated",
   opts: FetchOpts = FETCH_OPTS,
 ): Promise<RatingGenresResult> {
@@ -183,11 +194,11 @@ export async function scrapeRatingGenres(
       "Content-Type": "application/x-www-form-urlencoded",
       "X-Requested-With": "XMLHttpRequest",
     },
-    body: new URLSearchParams({ type, year, sourceID: "6", sort: "weighted" }).toString(),
+    body: new URLSearchParams({ type, year: String(year), sourceID: "6", sort: "weighted" }).toString(),
   });
   if (!res.ok) throw new Error(`Rating genres fetch failed: ${res.status}`);
   const html = await res.text();
-  const genres: Array<{ id: string; slug: string; name: string; url: string }> = [];
+  const genres: Array<{ id: number; slug: string; name: string; url: string }> = [];
   for (const m of html.matchAll(/<a href="(\/genre\/([^/]+)\/[^"]*)">([^<]+)<\/a>/g)) {
     const url = m[1];
     const slug = m[2];
@@ -195,13 +206,13 @@ export async function scrapeRatingGenres(
     if (url && slug && name) {
       const idM = slug.match(/^(\d+)/);
       genres.push({
-        id: idM?.[1] ?? "",
+        id: parseId(idM?.[1]) ?? 0,
         slug,
         name: decodeEntities(name.trim()),
         url: BASE + url,
       });
     }
   }
-  return { year, type, genres };
+  return { year: parseId(year) ?? new Date().getFullYear(), type, genres };
 }
 

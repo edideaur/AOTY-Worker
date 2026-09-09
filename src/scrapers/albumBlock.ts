@@ -1,9 +1,23 @@
-import { BASE, decodeEntities, cleanImageUrl } from "../constants.js";
+import { BASE, decodeEntities, cleanImageUrl, parseCount, parseScore } from "../constants.js";
 import type { AlbumBlock } from "../types.js";
 
+type RawAlbumBlock = {
+  url: string;
+  artist: string;
+  title: string;
+  cover: string;
+  mediaType: string;
+  releaseDate: string;
+  criticScore: string | null;
+  criticCount: string | null;
+  userScore: string | null;
+  userCount: string | null;
+  mustHear: boolean;
+};
+
 export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
-  const albums: AlbumBlock[] = [];
-  let cur: AlbumBlock | null = null;
+  const rawAlbums: RawAlbumBlock[] = [];
+  let cur: RawAlbumBlock | null = null;
   let ratingValue = "";
   let lastRatingType: "critic" | "user" | null = null;
 
@@ -23,7 +37,7 @@ export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
           userCount: null,
           mustHear: false,
         };
-        albums.push(cur);
+        rawAlbums.push(cur);
         lastRatingType = null;
         ratingValue = "";
       },
@@ -91,11 +105,17 @@ export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
     .transform(res)
     .arrayBuffer();
 
-  for (const a of albums) {
-    a.artist = decodeEntities(a.artist.trim());
-    a.title = decodeEntities(a.title.trim());
-    a.releaseDate = decodeEntities(a.releaseDate.trim());
-    a.cover = cleanImageUrl(a.cover.trim());
-  }
-  return albums;
+  return rawAlbums.map((a) => ({
+    url: a.url,
+    artist: decodeEntities(a.artist.trim()),
+    title: decodeEntities(a.title.trim()),
+    releaseDate: decodeEntities(a.releaseDate.trim()),
+    cover: cleanImageUrl(a.cover.trim()),
+    mediaType: a.mediaType,
+    criticScore: parseScore(a.criticScore),
+    criticCount: parseCount(a.criticCount),
+    userScore: parseScore(a.userScore),
+    userCount: parseCount(a.userCount),
+    mustHear: a.mustHear,
+  }));
 }

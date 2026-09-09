@@ -82,7 +82,7 @@ describe("social scrapers unit tests", () => {
       expect(res.lists[0].title).toBe("Pitchfork Best Albums 2023");
       expect(res.lists[0].publication).toBe("Pitchfork");
       expect(res.lists[0].publicationUrl).toBe("https://www.albumoftheyear.org/publication/1-pitchfork/");
-      expect(res.lists[0].rank).toBe("1");
+      expect(res.lists[0].rank).toBe(1);
 
       const resP1 = await scrapeAlbumCriticLists("1-album");
       expect(resP1.page).toBe(1);
@@ -158,14 +158,14 @@ describe("social scrapers unit tests", () => {
       const stats = await scrapeSiteStats();
       expect(stats.totals.length).toBe(1);
       expect(stats.totals[0].name).toBe("Total Albums");
-      expect(stats.totals[0].value).toBe("500,000");
+      expect(stats.totals[0].value).toBe(500000);
       expect(stats.leaderboards.length).toBe(1);
       expect(stats.leaderboards[0].title).toBe("Top Users");
       expect(stats.leaderboards[0].key).toBe("top_users");
       expect(stats.leaderboards[0].timestamp).toBe("Updated 1 hour ago");
       expect(stats.leaderboards[0].items.length).toBe(1);
       expect(stats.leaderboards[0].items[0].name).toBe("User1");
-      expect(stats.leaderboards[0].items[0].value).toBe("1,000");
+      expect(stats.leaderboards[0].items[0].value).toBe(1000);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -188,14 +188,14 @@ describe("social scrapers unit tests", () => {
     try {
       const comments = await scrapeCommentsPage("/album/1-album/comments/");
       expect(comments.length).toBe(1);
-      expect(comments[0].id).toBe("123");
+      expect(comments[0].id).toBe(123);
       expect(comments[0].username).toBe("commenter");
       expect(comments[0].text).toBe("Awesome release!");
-      expect(comments[0].replies).toBe("2");
+      expect(comments[0].replies).toBe(2);
 
       const repliesRes = await scrapeAlbumCommentReplies("1", "123");
-      expect(repliesRes.albumId).toBe("1");
-      expect(repliesRes.commentId).toBe("123");
+      expect(repliesRes.albumId).toBe(1);
+      expect(repliesRes.commentId).toBe(123);
       expect(repliesRes.replies.length).toBe(1);
 
       const rows = await scrapeCommentRows(new Response(commentHtml, { status: 200 }));
@@ -234,10 +234,10 @@ describe("social scrapers unit tests", () => {
 
     try {
       const news = await scrapeNewsDetail("100-radiohead-tour");
-      expect(news.id).toBe("100");
+      expect(news.id).toBe(100);
       expect(news.title).toBe("Radiohead Announces Tour");
       expect(news.source).toBe("Pitchfork");
-      expect(news.likes).toBe("50");
+      expect(news.likes).toBe(50);
       expect(news.embedUrl).toBe("https://www.youtube.com/embed/abc");
       expect(news.related.length).toBe(1);
       expect(news.streamingLinks.length).toBe(6);
@@ -361,8 +361,8 @@ describe("social scrapers unit tests", () => {
       expect(userLists.length).toBe(1);
       expect(userLists[0].title).toBe("Top Albums");
       expect(userLists[0].description).toBe("My favorite albums of all time.");
-      expect(userLists[0].likes).toBe("10");
-      expect(userLists[0].comments).toBe("2");
+      expect(userLists[0].likes).toBe(10);
+      expect(userLists[0].comments).toBe(2);
 
       const userListsP1 = await scrapeAlbumUserLists("1-okc");
       expect(userListsP1.length).toBe(1);
@@ -434,8 +434,8 @@ describe("social scrapers unit tests", () => {
       };
       const res = await scrapeAllComments("user_review", "100", "500");
       expect(res.type).toBe("user_review");
-      expect(res.itemId).toBe("100");
-      expect(res.albumId).toBe("500");
+      expect(res.itemId).toBe(100);
+      expect(res.albumId).toBe(500);
       expect(calledBody).toContain("type=user_review");
       expect(calledBody).toContain("itemID=100");
       expect(calledBody).toContain("albumID=500");
@@ -465,7 +465,7 @@ describe("social scrapers unit tests", () => {
     try {
       globalThis.fetch = async () => new Response(html, { status: 200 });
       const res = await scrapeEntityCorrections("album", "564912");
-      expect(res.id).toBe("564912");
+      expect(res.id).toBe(564912);
       expect(res.title).toBe("Don't Be Dumb");
       expect(res.addedOn).toBe("October 30, 2022");
       expect(res.addedBy).toBe("SomeGuy");
@@ -477,7 +477,7 @@ describe("social scrapers unit tests", () => {
       expect(res.changeLog[0]?.role).toBe("Moderator");
       expect(res.changeLog[0]?.date).toBe("6mo");
       expect(res.corrections.length).toBe(1);
-      expect(res.corrections[0]?.id).toBe("123");
+      expect(res.corrections[0]?.id).toBe(123);
       expect(res.corrections[0]?.title).toBe("Fix tracklist");
       expect(res.corrections[0]?.status).toBe("Fixed");
       expect(res.corrections[0]?.submittedBy).toBe("Submitter");

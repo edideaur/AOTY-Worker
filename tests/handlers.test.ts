@@ -357,12 +357,12 @@ describe("Query parameter routing & response shapes", () => {
       const resGenre = await worker.fetch(req("/genre/name?id=7"), env);
       expect(resGenre.status).toBe(200);
       const jsonGenre = (await resGenre.json()) as { id: string; name: string };
-      expect(jsonGenre.id).toBe("7");
+      expect(jsonGenre.id).toBe(7);
       expect(jsonGenre.name).toBe("Rock");
 
       const resArtist = await worker.fetch(req("/user/artist-ratings?username=123&artistId=10"), env);
       expect(resArtist.status).toBe(200);
-      const jsonArtist = (await resArtist.json()) as { username: string; artistId: string; ratings: unknown[] };
+      const jsonArtist = (await resArtist.json()) as { username: string; artistId: number; ratings: unknown[] };
       expect(jsonArtist.ratings.length).toBe(1);
 
       const resLikes = await worker.fetch(req("/album/likes?albumId=100"), env);
@@ -489,13 +489,13 @@ describe("Query parameter routing & response shapes", () => {
       const resSrc = await worker.fetch(req("/ratings/sources?year=2026"), env);
       expect(resSrc.status).toBe(200);
       const jsonSrc = (await resSrc.json()) as { year: string; sources: unknown[] };
-      expect(jsonSrc.year).toBe("2026");
+      expect(jsonSrc.year).toBe(2026);
       expect(jsonSrc.sources.length).toBe(1);
 
       const resGen = await worker.fetch(req("/ratings/genres?year=2026"), env);
       expect(resGen.status).toBe(200);
-      const jsonGen = (await resGen.json()) as { year: string; genres: unknown[] };
-      expect(jsonGen.year).toBe("2026");
+      const jsonGen = (await resGen.json()) as { year: number; genres: unknown[] };
+      expect(jsonGen.year).toBe(2026);
       expect(jsonGen.genres.length).toBe(1);
     } finally {
       restore();
@@ -723,8 +723,8 @@ describe("Query parameter routing & response shapes", () => {
       expect(resUserStats.status).toBe(200);
       const jsonUserStats = (await resUserStats.json()) as { username: string; stats: { ratings: string; reviews: string } };
       expect(jsonUserStats.username).toBe("MusicGeek");
-      expect(jsonUserStats.stats.ratings).toBe("1,250");
-      expect(jsonUserStats.stats.reviews).toBe("120");
+      expect(jsonUserStats.stats.ratings).toBe(1250);
+      expect(jsonUserStats.stats.reviews).toBe(120);
 
       const resUserFavs = await worker.fetch(req("/user/favorites?username=musicgeek"), env);
       expect(resUserFavs.status).toBe(200);
@@ -768,8 +768,8 @@ describe("Query parameter routing & response shapes", () => {
 
       const resCorrections = await worker.fetch(req("/corrections?type=album&id=1"), env);
       expect(resCorrections.status).toBe(200);
-      const jsonCorr = (await resCorrections.json()) as { id: string };
-      expect(jsonCorr.id).toBe("1");
+      const jsonCorr = (await resCorrections.json()) as { id: number };
+      expect(jsonCorr.id).toBe(1);
 
       const resInvalidType = await worker.fetch(req("/corrections?type=invalid&id=1"), env);
       expect(resInvalidType.status).toBe(400);

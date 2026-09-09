@@ -59,14 +59,14 @@ describe("scrapeListDetail unit test", () => {
       expect(detail.title).toBe("Pitchfork - The 50 Best Albums of 2020");
       expect(detail.sourceUrl).toBe("https://pitchfork.com/features/lists-and-guides/best-albums-2020/");
       expect(detail.items.length).toBe(1);
-      expect(detail.items[0]?.rank).toBe("1");
+      expect(detail.items[0]?.rank).toBe(1);
       expect(detail.items[0]?.title).toBe("Fiona Apple - Fetch the Bolt Cutters");
       expect(detail.items[0]?.artist).toBe("Fiona Apple");
       expect(detail.items[0]?.album).toBe("Fetch the Bolt Cutters");
       expect(detail.items[0]?.genres).toEqual(["Art Pop"]);
-      expect(detail.items[0]?.score).toBe("99");
-      expect(detail.items[0]?.scoreExact).toBe("98.5");
-      expect(detail.items[0]?.ratingCount).toBe("42");
+      expect(detail.items[0]?.score).toBe(99);
+      expect(detail.items[0]?.scoreExact).toBe(98.5);
+      expect(detail.items[0]?.ratingCount).toBe(42);
       expect(detail.items[0]?.blurb).toBe("An astonishing masterpiece of rhythmic ingenuity.");
       expect(detail.items[0]?.otherLists).toBe(15);
     } finally {

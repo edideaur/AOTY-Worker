@@ -412,6 +412,96 @@ export function cleanImageUrl<T extends string | null | undefined>(url: T): T {
     .replace(/\/\d+x\d+\//g, "/") as T;
 }
 
+/**
+ * Parse any scraped numeric text into a proper JSON number.
+ * Strips commas, spaces, parentheses, `#`, `%`, `+`, `.` suffixes (track numbers),
+ * and extracts the first numeric token. Returns null when no number is present
+ * (e.g. "NR", "", "—"). Never returns NaN and never keeps thousand separators,
+ * so API consumers always receive real integers/floats instead of "1,234".
+ */
+export function parseCount(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "number") {
+    return Number.isFinite(raw) ? Math.trunc(raw) : null;
+  }
+  const s = String(raw).trim();
+  if (!s || /^(nr|n\/a|na|—|–|-)$/i.test(s)) return null;
+  const cleaned = s.replace(/,/g, "");
+  const m = cleaned.match(/-?\d+(\.\d+)?/);
+  if (!m?.[0]) return null;
+  const n = Number(m[0]);
+  if (!Number.isFinite(n)) return null;
+  return Math.trunc(n);
+}
+
+/** Parse a score (0-100 or 0-10, possibly decimal like "9.5") into a number. */
+export function parseScore(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  const s = String(raw).trim();
+  if (!s || /^(nr|n\/a|na|—|–|-)$/i.test(s)) return null;
+  const cleaned = s.replace(/,/g, "");
+  const m = cleaned.match(/-?\d+(\.\d+)?/);
+  if (!m?.[0]) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Parse an exact score from a title attribute (e.g. "89.5", "89.53"). */
+export function parseExactScore(raw: unknown): number | null {
+  return parseScore(raw);
+}
+
+/** Parse a percentage ("55%", "55.5%") into a plain number (55, 55.5). */
+export function parsePercent(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  const s = String(raw).replace(/%/g, "").trim();
+  if (!s) return null;
+  return parseScore(s);
+}
+
+/** Parse a rank ("#1", "1.", "1") into an integer. */
+export function parseRank(raw: unknown): number | null {
+  return parseCount(raw);
+}
+
+/** Parse a track number ("1.", "1", "A1" -> null) into an integer. */
+export function parseTrackNumber(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "number") return Number.isFinite(raw) ? Math.trunc(raw) : null;
+  const s = String(raw).trim().replace(/\.$/, "");
+  if (!s) return null;
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  const m = s.replace(/,/g, "").match(/^\d+/);
+  return m?.[0] ? parseInt(m[0], 10) : null;
+}
+
+/** Parse a year ("2024", "2024 ") into an integer, null otherwise. */
+export function parseYear(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "number") {
+    const y = Math.trunc(raw);
+    return y >= 1000 && y <= 9999 ? y : null;
+  }
+  const s = String(raw).trim();
+  const m = s.match(/(19|20)\d{2}/);
+  return m?.[0] ? parseInt(m[0], 10) : null;
+}
+
+/** Parse a numeric ID ("1998", 1998) into an integer, null if not numeric. */
+export function parseId(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "number") return Number.isFinite(raw) ? Math.trunc(raw) : null;
+  const s = String(raw).trim();
+  if (!/^\d+$/.test(s)) {
+    const m = s.match(/^\d+/);
+    return m?.[0] ? parseInt(m[0], 10) : null;
+  }
+  const n = parseInt(s, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
 export const RES_HEADERS: HeadersInit = {
   "Content-Type": "application/json",
   "Access-Control-Allow-Origin": "*",

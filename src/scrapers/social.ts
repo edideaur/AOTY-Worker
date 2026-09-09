@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, parseCount, parseId, parseRank, type FetchOpts } from "../constants.js";
 import type {
   AllCommentsResult,
   AotyComment,
@@ -12,7 +12,6 @@ import type {
   NewsSearchItem,
   SiteUpdate,
   SiteStats,
-  SingleStat,
   LeaderboardModule,
   GuidelinesSection,
   TagItem,
@@ -28,8 +27,8 @@ export async function scrapeAlbumCriticLists(albumSlug: string, opts: FetchOpts 
   const url = page > 1 ? `${BASE}/album/${albumSlug}/critic-lists/${page}/` : `${BASE}/album/${albumSlug}/critic-lists/`;
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`Album critic lists fetch failed: ${res.status}`);
-  const lists: CriticListRank[] = [];
-  const st: { cur: CriticListRank | null } = { cur: null };
+  const lists: Array<{ url: string; title: string; publication: string; publicationUrl: string | null; cover: string | null; rank: string | null }> = [];
+  const st: { cur: { url: string; title: string; publication: string; publicationUrl: string | null; cover: string | null; rank: string | null } | null } = { cur: null };
   await new HTMLRewriter()
     .on(".listPub", {
       element() {
@@ -77,7 +76,7 @@ export async function scrapeAlbumCriticLists(albumSlug: string, opts: FetchOpts 
       publication: decodeEntities((l.publication ?? "").trim()),
       publicationUrl: l.publicationUrl ?? null,
       cover: l.cover ?? null,
-      rank: (l.rank ?? "").replace("#", "").trim() || null,
+      rank: parseRank((l.rank ?? "").replace("#", "").trim()),
     })),
   };
 }
@@ -213,10 +212,10 @@ export async function scrapeSiteStats(opts: FetchOpts = FETCH_OPTS): Promise<Sit
   const res = await fetch(`${BASE}/stats/`, opts);
   if (!res.ok) throw new Error(`Site stats fetch failed: ${res.status}`);
 
-  const totals: SingleStat[] = [];
+  const totals: Array<{ name: string; value: string }> = [];
   const leaderboards: LeaderboardModule[] = [];
 
-  let currentSingle: SingleStat | null = null;
+  let currentSingle: { name: string; value: string } | null = null;
   let currentLeaderboard: LeaderboardModule | null = null;
   let currentCells: string[] = [];
 
@@ -268,13 +267,14 @@ export async function scrapeSiteStats(opts: FetchOpts = FETCH_OPTS): Promise<Sit
           const c1 = currentCells[1];
           if (currentCells.length === 2 && currentLeaderboard && currentLeaderboard.items && c0 !== undefined && c1 !== undefined) {
             const existing = currentLeaderboard.items[currentLeaderboard.items.length - 1];
+            const parsedVal = parseCount(c1.trim()) ?? 0;
             if (!existing || existing.name !== decodeEntities(c0.trim())) {
               currentLeaderboard.items.push({
                 name: decodeEntities(c0.trim()),
-                value: c1.trim(),
+                value: parsedVal,
               });
             } else {
-              existing.value = c1.trim();
+              existing.value = parsedVal;
             }
           }
         }
@@ -296,7 +296,7 @@ export async function scrapeSiteStats(opts: FetchOpts = FETCH_OPTS): Promise<Sit
   return {
     totals: totals.map((t) => ({
       name: decodeEntities((t.name ?? "").trim()),
-      value: (t.value ?? "").trim(),
+      value: parseCount((t.value ?? "").trim()) ?? 0,
     })),
     leaderboards: leaderboards.map((l) => ({
       title: decodeEntities((l.title ?? "").trim()),
@@ -400,14 +400,14 @@ export async function scrapeNewsDetail(slug: string, opts: FetchOpts = FETCH_OPT
   const idM = slug.match(/^(\d+)/);
   return {
     url,
-    id: idM?.[1] ?? "",
+    id: parseId(idM?.[1]) ?? 0,
     title: decodeEntities(s.title.trim()),
     source: decodeEntities(s.source.trim()),
     sourceUrl: s.sourceUrl,
     date: s.date.trim(),
     image: s.image,
     text: decodeEntities(s.text.trim()),
-    likes: s.likes.trim() || "0",
+    likes: parseCount(s.likes.trim()) ?? 0,
     embedUrl: s.embedUrl,
     related: s.related.map((r) => ({ name: decodeEntities(r.name.trim()), url: r.url })),
     streamingLinks: s.streamingLinks,
@@ -566,15 +566,15 @@ export async function scrapeSiteUpdates(opts: FetchOpts = FETCH_OPTS, filter: st
   };
 }
 
-export async function scrapeAlbumCommentReplies(albumId: string, commentId: string, opts: FetchOpts = FETCH_OPTS): Promise<{ albumId: string; commentId: string; replies: AotyComment[] }> {
+export async function scrapeAlbumCommentReplies(albumId: string | number, commentId: string | number, opts: FetchOpts = FETCH_OPTS): Promise<{ albumId: number; commentId: number; replies: AotyComment[] }> {
   const res = await fetch(`${BASE}/scripts/showAlbumCommentReplies.php`, {
     ...opts,
     method: "POST",
     headers: { ...REQ_HEADERS, "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest", Referer: `${BASE}/album/${albumId}/` },
-    body: new URLSearchParams({ id: commentId, albumID: albumId }).toString(),
+    body: new URLSearchParams({ id: String(commentId), albumID: String(albumId) }).toString(),
   });
   if (!res.ok) throw new Error(`Comment replies fetch failed: ${res.status}`);
-  return { albumId, commentId, replies: await scrapeCommentRows(res) };
+  return { albumId: parseId(albumId) ?? 0, commentId: parseId(commentId) ?? 0, replies: await scrapeCommentRows(res) };
 }
 
 export async function scrapeHomepage(opts: FetchOpts = FETCH_OPTS): Promise<{
@@ -660,12 +660,12 @@ export async function scrapeAlbumUserLists(albumSlug: string, opts: FetchOpts = 
 
 export async function scrapeAllComments(
   type: string,
-  itemId: string,
-  albumId?: string | null,
+  itemId: string | number,
+  albumId?: string | number | null,
   opts: FetchOpts = FETCH_OPTS,
 ): Promise<AllCommentsResult> {
-  const bodyParams = new URLSearchParams({ type, itemID: itemId });
-  if (albumId) bodyParams.set("albumID", albumId);
+  const bodyParams = new URLSearchParams({ type, itemID: String(itemId) });
+  if (albumId) bodyParams.set("albumID", String(albumId));
 
   const res = await fetch(`${BASE}/scripts/viewAllComments.php`, {
     ...opts,
@@ -682,8 +682,8 @@ export async function scrapeAllComments(
   const comments = await scrapeCommentRows(new Response(html));
   return {
     type,
-    itemId,
-    albumId: albumId ?? null,
+    itemId: parseId(itemId) ?? 0,
+    albumId: albumId ? (parseId(albumId) ?? null) : null,
     comments,
   };
 }
@@ -761,7 +761,7 @@ export async function scrapeEntityCorrections(
     const dateMatch = content.match(/<span class="gray-font">([^<]*)<\/span>/i);
 
     corrections.push({
-      id: cid,
+      id: parseId(cid) ?? 0,
       title: titleMatch?.[1] ? decodeEntities(titleMatch[1].trim()) : "",
       status: statusMatch?.[1] ? decodeEntities(statusMatch[1].trim()) : "Pending",
       submittedBy: submitterMatch?.[2] ? decodeEntities(submitterMatch[2].trim()) : null,
@@ -771,7 +771,7 @@ export async function scrapeEntityCorrections(
   }
 
   return {
-    id: idOrSlug,
+    id: parseId(idOrSlug.match(/^(\d+)/)?.[1] ?? idOrSlug) ?? 0,
     title,
     url,
     addedOn,

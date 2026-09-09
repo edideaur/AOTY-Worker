@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, decodeEntities, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, decodeEntities, parseCount, parseScore, parseExactScore, parseRank, type FetchOpts } from "../constants.js";
 import type {
   ListDetailItem,
   ListEntry,
@@ -52,7 +52,19 @@ export async function scrapeListsIndex(url: string, opts: FetchOpts = FETCH_OPTS
   }));
 }
 
-type RawListDetailItem = Omit<ListDetailItem, "artist" | "album">;
+type RawListDetailItem = {
+  rank: string;
+  title: string;
+  url: string;
+  cover: string;
+  date: string;
+  genres: string[];
+  score: string | null;
+  scoreExact: string | null;
+  ratingCount: string | null;
+  blurb: string | null;
+  otherLists: number | null;
+};
 
 export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS): Promise<{ title: string; sourceUrl: string; items: ListDetailItem[] }> {
   const res = await fetch(url, opts);
@@ -146,13 +158,13 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
   return {
     title: decodeEntities(listTitle.trim()),
     sourceUrl,
-    items: items.map((item) => {
+    items: items.map((item, idx) => {
       const rawTitle = decodeEntities((item.title ?? "").trim());
       const dashIdx = rawTitle.indexOf(" - ");
       const artist = dashIdx > -1 ? rawTitle.slice(0, dashIdx).trim() : "";
       const album = dashIdx > -1 ? rawTitle.slice(dashIdx + 3).trim() : rawTitle;
       return {
-        rank: (item.rank ?? "").trim(),
+        rank: parseRank((item.rank ?? "").trim()) ?? idx + 1,
         artist,
         album,
         title: rawTitle,
@@ -160,9 +172,9 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
         cover: item.cover ?? "",
         date: (item.date ?? "").trim(),
         genres: [...new Set((item.genres ?? []).map((g) => g.trim()).filter(Boolean))],
-        score: (item.score ?? "").trim() || null,
-        scoreExact: item.scoreExact ?? null,
-        ratingCount: (item.ratingCount ?? "").replace(/reviews?|ratings?/gi, "").trim() || null,
+        score: parseScore((item.score ?? "").trim()),
+        scoreExact: parseExactScore(item.scoreExact),
+        ratingCount: parseCount((item.ratingCount ?? "").replace(/reviews?|ratings?/gi, "").trim()),
         blurb: item.blurb ? decodeEntities(item.blurb.trim()) : null,
         otherLists: item.otherLists ?? null,
       };

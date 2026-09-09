@@ -1,9 +1,20 @@
-import { BASE, decodeEntities } from "../constants.js";
+import { BASE, decodeEntities, parseCount, parseId } from "../constants.js";
 import type { AotyComment } from "../types.js";
 
+type RawComment = {
+  id: string;
+  username: string;
+  userUrl: string;
+  avatar: string | null;
+  date: string;
+  dateExact: string;
+  text: string;
+  replies: string;
+};
+
 export async function scrapeCommentRows(res: Response): Promise<AotyComment[]> {
-  const comments: AotyComment[] = [];
-  const st: { cur: AotyComment | null; textBuf: string } = { cur: null, textBuf: "" };
+  const comments: RawComment[] = [];
+  const st: { cur: RawComment | null; textBuf: string } = { cur: null, textBuf: "" };
   await new HTMLRewriter()
     .on(".commentRow", {
       element(el) {
@@ -51,13 +62,13 @@ export async function scrapeCommentRows(res: Response): Promise<AotyComment[]> {
     .arrayBuffer();
   if (st.cur) st.cur.text = st.textBuf.trim();
   return comments.map((c) => ({
-    id: c.id ?? "",
+    id: parseId(c.id) ?? 0,
     username: decodeEntities((c.username ?? "").trim()),
     userUrl: c.userUrl ?? "",
     avatar: c.avatar ?? null,
     date: (c.date ?? "").trim(),
     dateExact: c.dateExact ?? "",
     text: decodeEntities((c.text ?? "").trim()),
-    replies: (c.replies ?? "").trim() || "0",
+    replies: parseCount((c.replies ?? "").trim()) ?? 0,
   }));
 }

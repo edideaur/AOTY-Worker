@@ -1,9 +1,21 @@
-import { BASE, decodeEntities } from "../constants.js";
+import { BASE, decodeEntities, parseCount } from "../constants.js";
 import type { UserListEntry } from "../types.js";
 
+type RawUserListEntry = {
+  url: string;
+  title: string;
+  username: string;
+  userUrl: string;
+  avatar: string | null;
+  covers: string[];
+  description: string | null;
+  likes: string | null;
+  comments: string | null;
+};
+
 export async function scrapeUserListRows(res: Response): Promise<UserListEntry[]> {
-  const lists: UserListEntry[] = [];
-  let cur: UserListEntry | null = null;
+  const lists: RawUserListEntry[] = [];
+  let cur: RawUserListEntry | null = null;
   let inTitle = false;
   let inUser = false;
   await new HTMLRewriter()
@@ -75,7 +87,7 @@ export async function scrapeUserListRows(res: Response): Promise<UserListEntry[]
     avatar: l.avatar ?? null,
     covers: l.covers ?? [],
     description: l.description ? decodeEntities((l.description as string).trim()) : null,
-    likes: (l.likes ?? "").trim() || null,
-    comments: (l.comments ?? "").trim() || null,
+    likes: parseCount((l.likes ?? "").trim()),
+    comments: parseCount((l.comments ?? "").trim()),
   }));
 }
