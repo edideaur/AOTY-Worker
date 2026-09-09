@@ -167,6 +167,16 @@ describe("cleanImageUrl and sanitizeImageUrls", () => {
       .toBe("https://cdn.albumoftheyear.org/l/full/35652.jpg");
   });
 
+  it("strips /sq/ square-thumb segments from artist image URLs", () => {
+    expect(cleanImageUrl("https://cdn.albumoftheyear.org/artists/sq/kanye-west_1586101900.jpg"))
+      .toBe("https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg");
+    expect(cleanImageUrl("https://cdn.albumoftheyear.org/artists/sq/death-grips_1762891915.jpg"))
+      .toBe("https://cdn.albumoftheyear.org/artists/death-grips_1762891915.jpg");
+    // combined with dimension prefixes
+    expect(cleanImageUrl("https://cdn2.albumoftheyear.org/200x0/artists/sq/pic.jpg"))
+      .toBe("https://cdn2.albumoftheyear.org/artists/pic.jpg");
+  });
+
   it("leaves non-thumbnail URLs and null unchanged", () => {
     expect(cleanImageUrl(null)).toBeNull();
     expect(cleanImageUrl(undefined)).toBeUndefined();
@@ -194,5 +204,114 @@ describe("cleanImageUrl and sanitizeImageUrls", () => {
     expect(sanitized.nested.avatar).toBe("https://cdn.albumoftheyear.org/user/pic.jpg");
     expect(sanitized.list[0].image).toBe("https://cdn2.albumoftheyear.org/album/pic2.jpg");
     expect(sanitized.list[1]).toBe("https://cdn2.albumoftheyear.org/album/pic3.jpg");
+  });
+
+  it("sanitizes /sq/ artist thumbnails to full-size URLs", () => {
+    const input = {
+      name: "Kanye West",
+      image: "https://cdn.albumoftheyear.org/artists/sq/kanye-west_1586101900.jpg",
+      similarArtists: [
+        { name: "Death Grips", image: "https://cdn.albumoftheyear.org/artists/sq/death-grips_1762891915.jpg" },
+      ],
+    };
+    const sanitized = sanitizeImageUrls(input);
+    expect(sanitized.image).toBe("https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg");
+    expect(sanitized.similarArtists[0].image).toBe("https://cdn.albumoftheyear.org/artists/death-grips_1762891915.jpg");
+  });
+});
+
+describe("OpenAPI spec integrity", () => {
+  it("has no dangling $ref schema references", () => {
+    const defined = new Set(Object.keys(openApiSpec.components.schemas));
+    const used = new Set<string>();
+    const walk = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        for (const item of value) walk(item);
+        return;
+      }
+      if (value !== null && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        if (typeof record["$ref"] === "string") {
+          const match = (record["$ref"] as string).match(/#\/components\/schemas\/(.+)/);
+          if (match?.[1]) used.add(match[1]);
+        }
+        for (const item of Object.values(record)) walk(item);
+      }
+    };
+    walk(openApiSpec.paths);
+    const missing = [...used].filter((name) => !defined.has(name));
+    expect(missing).toEqual([]);
+  });
+
+  it("defines ArtistLink and the previously missing result schemas", () => {
+    const schemas = openApiSpec.components.schemas as Record<string, unknown>;
+    for (const name of [
+      "ArtistLink",
+      "EntityCorrectionsResult",
+      "UserAlbumTrackRatingsResult",
+      "AlbumDistributionRow",
+      "AllCommentsResult",
+    ]) {
+      expect(schemas[name]).toBeDefined();
+    }
+  });
+
+  it("uses unique operationIds across all paths", () => {
+    const seen = new Set<string>();
+    const dupes: string[] = [];
+    const walk = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        for (const item of value) walk(item);
+        return;
+      }
+      if (value !== null && typeof value === "object") {
+        for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+          if (key === "operationId" && typeof item === "string") {
+            if (seen.has(item)) dupes.push(item);
+            seen.add(item);
+          } else walk(item);
+        }
+      }
+    };
+    walk(openApiSpec.paths);
+    expect(dupes).toEqual([]);
+  });
+
+  it("documents every data route including aliases", async () => {
+    const source = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
+    const routed = new Set<string>();
+    for (const match of source.matchAll(/path === "([^"]+)"/g)) {
+      if (match[1]) routed.add(match[1]);
+    }
+    // Doc/health/meta/infra endpoints intentionally excluded from the API spec.
+    const excluded = new Set([
+      "/",
+      "/scalar",
+      "/redoc",
+      "/swagger",
+      "/rapidoc",
+      "/rapipdf",
+      "/elements",
+      "/robots.txt",
+      "/health",
+      "/.well-known/health",
+      "/.well-known/api-catalog",
+      "/.well-known/security.txt",
+      "/.well-known/ai-plugin.json",
+      "/openapi.json",
+      "/.well-known/openapi.json",
+      "/openapi.yaml",
+      "/postman.json",
+      "/humans.txt",
+      "/sitemap.xml",
+      "/version.json",
+      "/manifest.json",
+      "/opensearch.xml",
+      "/favicon.ico",
+      "/ping",
+    ]);
+    const specPaths = new Set(Object.keys(openApiSpec.paths));
+    const undocumented = [...routed].filter((p) => !specPaths.has(p) && !excluded.has(p));
+    expect(undocumented).toEqual([]);
   });
 });

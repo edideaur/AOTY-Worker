@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, cleanImageUrl, decodeEntities, type FetchOpts } from "../constants.js";
 import type { LabelAutocompleteItem, SearchArtist, SearchAutocompleteItem, SearchLabel } from "../types.js";
 
 export async function scrapeArtistSearch(url: string, opts: FetchOpts = FETCH_OPTS): Promise<SearchArtist[]> {
@@ -25,7 +25,7 @@ export async function scrapeArtistSearch(url: string, opts: FetchOpts = FETCH_OP
     })
     .on(".artistBlock .image img", {
       element(el) {
-        if (current) current.image = el.getAttribute("src") ?? null;
+        if (current) current.image = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".artistBlock > a", {
@@ -45,6 +45,7 @@ export async function scrapeArtistSearch(url: string, opts: FetchOpts = FETCH_OP
   return artists.map((a) => ({
     ...a,
     name: decodeEntities((a.name ?? "").trim()),
+    image: cleanImageUrl(a.image ?? null),
   }));
 }
 
@@ -79,7 +80,7 @@ export async function scrapeUserSearch(url: string, opts: FetchOpts = FETCH_OPTS
     })
     .on(".userRatingBlock img", {
       element(el) {
-        if (current) current.image = el.getAttribute("src") ?? null;
+        if (current) current.image = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .transform(res)
@@ -88,6 +89,7 @@ export async function scrapeUserSearch(url: string, opts: FetchOpts = FETCH_OPTS
   return users.map((a) => ({
     ...a,
     name: decodeEntities((a.name ?? "").trim()),
+    image: cleanImageUrl(a.image ?? null),
   }));
 }
 
@@ -165,7 +167,7 @@ export async function scrapeSearchAutocomplete(query: string, opts: FetchOpts = 
       const rawLink = item["link"] ? String(item["link"]) : item["url"] ? String(item["url"]) : undefined;
       const link = rawLink ? (rawLink.startsWith("http") ? rawLink : `${BASE}${rawLink.startsWith("/") ? "" : "/"}${rawLink}`) : undefined;
       const type = item["type"] ? String(item["type"]).trim() : undefined;
-      const image = item["image"] ? String(item["image"]).trim() : null;
+      const image = item["image"] ? cleanImageUrl(String(item["image"]).trim()) : null;
       return {
         value,
         ...(rawLabel ? { label: rawLabel } : {}),

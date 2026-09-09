@@ -1,12 +1,14 @@
-import { BASE, FETCH_OPTS, decodeEntities, parseCount, parseScore, parseId, parseRank, parseTrackNumber, parseYear, parsePercent, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, cleanImageUrl, decodeEntities, parseCount, parseScore, parseId, parseRank, parseTrackNumber, parseYear, parsePercent, type FetchOpts } from "../constants.js";
 import { scrapeAlbumBlocks } from "./albumBlock.js";
 import { scrapeCommentRows } from "./commentRow.js";
 import { scrapeUserListRows } from "./userListRow.js";
 import { parseAlbumUserReviewRows } from "./album.js";
+import { fetchArtistImage } from "./artist.js";
 import type {
   AlbumBlock,
   AlbumDistributionRow,
   AlbumUserReviewsResult,
+  ArtistLink,
   StreamingLink,
   UserBadgeItem,
   UserDistributionResult,
@@ -107,7 +109,7 @@ export async function scrapeUserProfile(username: string, opts: FetchOpts = FETC
     displayName,
     userId: parseId(userId),
     memberSince,
-    avatar: avatarM?.[1] ?? null,
+    avatar: cleanImageUrl(avatarM?.[1] ?? null),
     bio: bioM?.[1] ? decodeEntities(bioM[1].replace(/<[^>]+>/g, "").trim()) : null,
     location: locM?.[1] ? decodeEntities(locM[1].replace(/<[^>]+>/g, "").trim()) : null,
     links,
@@ -263,7 +265,7 @@ export async function scrapeUserTagDetail(
 }
 
 async function scrapeUserAlbumBlocks(res: Response, username: string): Promise<UserRating[]> {
-  type RawUserRating = { url: string; artist: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean; userRating: string | null; ratedDate: string | null; reviewUrl: string | null };
+  type RawUserRating = { url: string; artist: string; artistUrl: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean; userRating: string | null; ratedDate: string | null; reviewUrl: string | null };
   const ratings: RawUserRating[] = [];
   let cur: RawUserRating | null = null;
   let ratingValue = "";
@@ -272,7 +274,7 @@ async function scrapeUserAlbumBlocks(res: Response, username: string): Promise<U
   await new HTMLRewriter()
     .on(".albumBlock", {
       element(el) {
-        cur = { url: "", artist: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false, userRating: null, ratedDate: null, reviewUrl: null };
+        cur = { url: "", artist: "", artistUrl: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false, userRating: null, ratedDate: null, reviewUrl: null };
         ratings.push(cur);
         lastRatingType = null;
         ratingValue = "";
@@ -299,6 +301,15 @@ async function scrapeUserAlbumBlocks(res: Response, username: string): Promise<U
     .on(".albumBlock .artistTitle", {
       text(t) {
         if (cur) cur.artist = (cur.artist ?? "") + t.text;
+      },
+    })
+    .on(".albumBlock a", {
+      element(el) {
+        // artistTitle is sometimes a link (or wrapped in one); first /artist/ href wins.
+        const href = el.getAttribute("href") ?? "";
+        if (cur && !cur.artistUrl && href.includes("/artist/")) {
+          cur.artistUrl = href.startsWith("http") ? href : BASE + href;
+        }
       },
     })
     .on(".albumBlock .albumTitle", {
@@ -359,8 +370,10 @@ async function scrapeUserAlbumBlocks(res: Response, username: string): Promise<U
   return ratings.map((r) => ({
     url: r.url,
     artist: decodeEntities(r.artist.trim()),
+    artistUrl: r.artistUrl,
+    artistImage: null,
     title: decodeEntities(r.title.trim()),
-    cover: r.cover,
+    cover: cleanImageUrl(r.cover),
     mediaType: r.mediaType,
     releaseDate: r.releaseDate.replace(/\s+/g, " ").trim(),
     criticScore: parseScore(r.criticScore),
@@ -418,7 +431,7 @@ export async function scrapeFollowList(
     page,
     users: users
       .filter((u) => (u.url ?? "").trim())
-      .map((u) => ({ url: u.url ?? "", name: decodeEntities((u.name ?? "").trim()), image: u.image ?? null })),
+      .map((u) => ({ url: u.url ?? "", name: decodeEntities((u.name ?? "").trim()), image: cleanImageUrl(u.image ?? null) })),
   };
 }
 
@@ -534,12 +547,13 @@ export async function scrapeUserReviewBlocks(res: Response): Promise<UserReview[
       url: r.url ?? "",
       artist: decodeEntities((r.artist ?? "").trim()),
       artistUrl: r.artistUrl ?? "",
+      artistImage: null,
       album: decodeEntities((r.album ?? "").trim()),
       albumUrl: r.albumUrl ?? "",
-      cover: r.cover ?? null,
+      cover: cleanImageUrl(r.cover ?? null),
       username: decodeEntities((r.username ?? "").trim()),
       userUrl: r.userUrl ?? "",
-      avatar: r.avatar ?? null,
+      avatar: cleanImageUrl(r.avatar ?? null),
       rating: parseScore((r.rating ?? "").trim()),
       text: decodeEntities((r.text ?? "").trim()),
       likes: parseCount((r.likes ?? "").trim()) ?? 0,
@@ -679,12 +693,13 @@ async function scrapeAlbumReviewRows(res: Response, fallbackUsername: string | n
       url: r.url ?? "",
       artist: decodeEntities((r.artist ?? "").trim()),
       artistUrl: r.artistUrl ?? "",
+      artistImage: null,
       album: decodeEntities((r.album ?? "").trim()),
       albumUrl: r.albumUrl ?? "",
-      cover: r.cover ?? null,
+      cover: cleanImageUrl(r.cover ?? null),
       username: decodeEntities((r.username ?? "").trim()),
       userUrl: r.userUrl ?? "",
-      avatar: r.avatar ?? null,
+      avatar: cleanImageUrl(r.avatar ?? null),
       rating: parseScore((r.rating ?? "").trim()),
       text: decodeEntities((r.text ?? "").replace(/read more\s*$/i, "").trim()),
       likes: parseCount((r.likes ?? "").trim()) ?? 0,
@@ -871,7 +886,7 @@ export async function scrapeUserReviewDetail(username: string, slug: string, opt
     ? {
         title: decodeEntities((prevM[2] ?? "").trim()),
         url: prevM[1].startsWith("http") ? prevM[1] : BASE + prevM[1],
-        cover: prevCoverM?.[1] ?? null,
+        cover: cleanImageUrl(prevCoverM?.[1] ?? null),
       }
     : null;
 
@@ -879,7 +894,7 @@ export async function scrapeUserReviewDetail(username: string, slug: string, opt
     ? {
         title: decodeEntities((nextM[2] ?? "").trim()),
         url: nextM[1].startsWith("http") ? nextM[1] : BASE + nextM[1],
-        cover: nextCoverM?.[1] ?? null,
+        cover: cleanImageUrl(nextCoverM?.[1] ?? null),
       }
     : null;
 
@@ -889,12 +904,13 @@ export async function scrapeUserReviewDetail(username: string, slug: string, opt
     url,
     artist: decodeEntities(s.artist.trim()),
     artistUrl: s.artistUrl,
+    artistImage: await fetchArtistImage(s.artistUrl, opts),
     album: decodeEntities(s.album.trim()),
     albumUrl: s.albumUrl,
-    cover: s.cover,
+    cover: cleanImageUrl(s.cover),
     username,
     userUrl: `${BASE}/user/${encodeURIComponent(username)}/`,
-    avatar: s.avatar,
+    avatar: cleanImageUrl(s.avatar),
     rating: parseScore(s.rating.trim()),
     text: decodeEntities(s.text.trim()),
     likes: parseCount(s.likes.trim()) ?? 0,
@@ -1025,9 +1041,10 @@ export async function scrapeUserListDetail(
       rank: parseRank((i.rank ?? "").replace(".", "").trim()) ?? idx + 1,
       artist: decodeEntities((i.artist ?? "").trim()),
       artistUrl: i.artistUrl ?? "",
+      artistImage: null,
       title: decodeEntities((i.title ?? "").trim()),
       url: i.url ?? "",
-      cover: i.cover ?? null,
+      cover: cleanImageUrl(i.cover ?? null),
       year: i.year ? parseYear(i.year) : null,
     })),
     comments,
@@ -1169,7 +1186,7 @@ export async function scrapeUserBadges(
             badges.push({
               name: decodeEntities(st.cur.name.trim()),
               description: st.cur.description ? decodeEntities(st.cur.description.trim()) : null,
-              image: st.cur.image ?? null,
+              image: cleanImageUrl(st.cur.image ?? null),
               date: st.cur.date ? st.cur.date.trim() : null,
             });
             st.cur = null;
@@ -1200,13 +1217,13 @@ export async function scrapeUserYearEnd(
     ?? html.match(/<div class="userName"><a [^>]*>([^<]*)<\/a><\/div>/i);
   const displayName = userM?.[2] ? decodeEntities(userM[2].trim()) : userM?.[1] ? decodeEntities(userM[1].trim()) : username;
   const avatarM = html.match(/<div class="userImage"><a [^>]*><img [^>]*src="([^"]+)"/i);
-  const avatar = avatarM?.[1] ?? null;
+  const avatar = cleanImageUrl(avatarM?.[1] ?? null);
 
   const coversByIndex = new Map<number, string>();
   for (const cm of html.matchAll(/<div class="yearEnd block[^"]*" data-album-index="(\d+)">[\s\S]*?<img [^>]*src="([^"]+)"/g)) {
     if (cm[1] && cm[2]) {
       const idx = parseInt(cm[1], 10);
-      coversByIndex.set(idx, cm[2]);
+      coversByIndex.set(idx, cleanImageUrl(cm[2]));
     }
   }
 
@@ -1226,6 +1243,7 @@ export async function scrapeUserYearEnd(
       rank: idx + 1,
       artist,
       artistUrl: "",
+      artistImage: null,
       album,
       albumUrl,
       cover,
@@ -1353,7 +1371,7 @@ export async function scrapeUserArtistRatings(
       rank: r.rank,
       album: r.album,
       albumUrl: r.albumUrl,
-      cover: r.cover,
+      cover: cleanImageUrl(r.cover),
       year: r.year ? parseYear(r.year) : null,
       score: parseScore(r.score),
       reviewUrl: r.reviewUrl,
@@ -1395,9 +1413,9 @@ export async function scrapeUserAlbumTrackRatings(
 
   const coverM = html.match(/<div class="albumHeaderCover">[\s\S]*?<img [^>]*data-src="([^"]+)"/i)
     ?? html.match(/<div class="albumHeaderCover">[\s\S]*?<img [^>]*src="([^"]+)"/i);
-  const cover = coverM?.[1] ?? null;
+  const cover = cleanImageUrl(coverM?.[1] ?? null);
 
-  const tracks: Array<{ number: number; title: string; url: string; length: string; score: number | null; features: string[] }> = [];
+  const tracks: Array<{ number: number; title: string; url: string; length: string; score: number | null; features: string[]; featureLinks: ArtistLink[] }> = [];
   for (const tr of html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
     const r = tr[1];
     if (!r) continue;
@@ -1407,10 +1425,26 @@ export async function scrapeUserAlbumTrackRatings(
     const scoreM = r.match(/<td class="trackRating">(?:<span[^>]*>)?([^<]+)(?:<\/span>)?<\/td>/i);
 
     const feat: string[] = [];
+    const featLinks: ArtistLink[] = [];
     const featBlock = r.match(/<div class="featuredArtists">([\s\S]*?)<\/div>/i);
     if (featBlock?.[1]) {
-      for (const fa of featBlock[1].matchAll(/<a [^>]*>([^<]+)<\/a>/g)) {
-        if (fa[1]) feat.push(decodeEntities(fa[1].trim()));
+      for (const fa of featBlock[1].matchAll(/<a[^>]*href="([^"]*)"[^>]*>([^<]+)<\/a>/g)) {
+        if (fa[2]) {
+          feat.push(decodeEntities(fa[2].trim()));
+          if (fa[1]?.includes("/artist/")) {
+            featLinks.push({
+              name: decodeEntities(fa[2].trim()),
+              url: fa[1].startsWith("http") ? fa[1] : BASE + fa[1],
+              image: null,
+            });
+          }
+        }
+      }
+      // Fallback for feature links without hrefs (keep names only).
+      if (feat.length === 0) {
+        for (const fa of featBlock[1].matchAll(/<a [^>]*>([^<]+)<\/a>/g)) {
+          if (fa[1]) feat.push(decodeEntities(fa[1].trim()));
+        }
       }
     }
 
@@ -1424,6 +1458,7 @@ export async function scrapeUserAlbumTrackRatings(
         length: lenM?.[1]?.trim() ?? "",
         score: parseScore(score),
         features: feat,
+        featureLinks: featLinks,
       });
     }
   }

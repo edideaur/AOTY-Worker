@@ -189,14 +189,17 @@ describe("scrapeAlbumPage unit test", () => {
       expect(album.labels[0].name).toBe("Def Jam");
       expect(album.labels[0].url).toBe("https://www.albumoftheyear.org/label/1-def-jam/");
       expect(album.vibes).toEqual(["epic"]);
-      expect(album.producers).toEqual([{ name: "Kanye West", url: "https://www.albumoftheyear.org/artist/183-kanye-west/" }]);
-      expect(album.writers).toEqual([{ name: "Mike Dean", url: "https://www.albumoftheyear.org/artist/100-mike-dean/" }]);
+      expect(album.producers).toEqual([{ name: "Kanye West", url: "https://www.albumoftheyear.org/artist/183-kanye-west/", image: null }]);
+      expect(album.writers).toEqual([{ name: "Mike Dean", url: "https://www.albumoftheyear.org/artist/100-mike-dean/", image: null }]);
       expect(album.totalLength).toBe("1 hour, 8 minutes");
       expect(album.genres).toContain("Hip Hop");
       expect(album.tracklist.length).toBe(3);
       expect(album.tracklist[0].title).toBe("Dark Fantasy");
       expect(album.tracklist[0].length).toBe("4:40");
       expect(album.tracklist[0].features).toEqual(["Bon Iver"]);
+      expect(album.tracklist[0].featureLinks).toEqual([
+        { name: "Bon Iver", url: "https://www.albumoftheyear.org/artist/1-bon-iver/", image: null },
+      ]);
       expect(album.tracklist[1].title).toBe("Gorgeous");
       expect(album.tracklist[2].title).toBe("Power");
       expect(album.reviews.length).toBe(1);
@@ -227,9 +230,11 @@ describe("scrapeAlbumPage unit test", () => {
 
       expect(album.moreAlbums.length).toBe(1);
       expect(album.moreAlbums[0].title).toBe("Yeezus");
+      expect(album.moreAlbums[0].artistUrl).toBe("https://www.albumoftheyear.org/artist/183-kanye-west/");
 
       expect(album.similarAlbums.length).toBe(1);
       expect(album.similarAlbums[0].title).toBe("To Pimp a Butterfly");
+      expect(album.similarAlbums[0].artistUrl).toBe("https://www.albumoftheyear.org/artist/200-kendrick-lamar/");
 
       expect(album.yearEndLists.length).toBe(1);
       expect(album.yearEndLists[0].rank).toBe(1);
@@ -285,6 +290,109 @@ describe("scrapeAlbumPage unit test", () => {
       expect(emptyReviewAlbum.reviews).toEqual([]);
       expect(emptyReviewAlbum.tracklist).toEqual([]);
       expect(emptyReviewAlbum.label).toBe("");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("enriches album with full-size artist image from the artist page", async () => {
+    const albumHtml = `
+      <script type="application/ld+json">
+      {
+        "name": "My Beautiful Dark Twisted Fantasy",
+        "byArtist": { "name": "Kanye West", "url": "https://www.albumoftheyear.org/artist/183-kanye-west/" },
+        "image": "https://cdn.albumoftheyear.org/album/1998.jpg",
+        "datePublished": "2010-11-22"
+      }
+      </script>
+    `;
+    const artistHtml = `
+      <head>
+        <link rel="image_src" href="https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg" />
+        <link href="https://www.albumoftheyear.org/artist/183-kanye-west/" rel="canonical" />
+        <meta property="og:image" content="https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg" />
+        <meta property="og:url" content="https://www.albumoftheyear.org/artist/183-kanye-west/" />
+      </head>
+      <h1 class="artistHeadline">Kanye West</h1>
+      <div class="artistImage"><img src="https://cdn.albumoftheyear.org/artists/sq/kanye-west_1586101900.jpg" /></div>
+    `;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes("/artist/")) return new Response(artistHtml, { status: 200 });
+      return new Response(albumHtml, { status: 200 });
+    };
+
+    try {
+      const album = await scrapeAlbumPage("https://www.albumoftheyear.org/album/1998-kanye-west-my-beautiful-dark-twisted-fantasy.php");
+      expect(album.artist).toBe("Kanye West");
+      expect(album.artistUrl).toBe("https://www.albumoftheyear.org/artist/183-kanye-west/");
+      expect(album.artistImage).toBe("https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("leaves artistImage null when the artist page has no image", async () => {
+    const albumHtml = `
+      <script type="application/ld+json">
+      {
+        "name": "Unknown Album",
+        "byArtist": { "name": "No Photo Band", "url": "https://www.albumoftheyear.org/artist/999-no-photo-band/" }
+      }
+      </script>
+    `;
+    const artistHtml = `
+      <link href="https://www.albumoftheyear.org/artist/999-no-photo-band/" rel="canonical" />
+      <h1 class="artistHeadline">No Photo Band</h1>
+    `;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes("/artist/")) return new Response(artistHtml, { status: 200 });
+      return new Response(albumHtml, { status: 200 });
+    };
+
+    try {
+      const album = await scrapeAlbumPage("https://www.albumoftheyear.org/album/999-unknown.php");
+      expect(album.artistImage).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("skips the artist page fetch when includeArtistImage is false (minimal mode)", async () => {
+    const albumHtml = `
+      <script type="application/ld+json">
+      {
+        "name": "My Beautiful Dark Twisted Fantasy",
+        "byArtist": { "name": "Kanye West", "url": "https://www.albumoftheyear.org/artist/183-kanye-west/" },
+        "image": "https://cdn.albumoftheyear.org/album/1998.jpg",
+        "datePublished": "2010-11-22"
+      }
+      </script>
+    `;
+
+    const requested: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url: string | URL | Request) => {
+      requested.push(String(url));
+      return new Response(albumHtml, { status: 200 });
+    };
+
+    try {
+      const album = await scrapeAlbumPage(
+        "https://www.albumoftheyear.org/album/1998-kanye-west-my-beautiful-dark-twisted-fantasy.php",
+        undefined,
+        false,
+      );
+      expect(album.artist).toBe("Kanye West");
+      expect(album.artistUrl).toBe("https://www.albumoftheyear.org/artist/183-kanye-west/");
+      expect(album.artistImage).toBeNull();
+      // only the album page itself was fetched - no artist page lookup
+      expect(requested).toEqual(["https://www.albumoftheyear.org/album/1998-kanye-west-my-beautiful-dark-twisted-fantasy.php"]);
     } finally {
       globalThis.fetch = originalFetch;
     }

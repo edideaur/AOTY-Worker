@@ -57,6 +57,8 @@ describe("song scrapers unit tests", () => {
       expect(song.id).toBe(2580);
       expect(song.title).toBe("Ghost Town");
       expect(song.artist).toBe("Kanye West");
+      // artist page fetch returns song HTML in this mock, so no artist image is found
+      expect(song.artistImage).toBeNull();
       expect(song.userScore).toBe(91);
       expect(song.userScoreExact).toBe(90.5);
       expect(song.ratingCount).toBe(10000);
@@ -132,6 +134,34 @@ describe("song scrapers unit tests", () => {
       expect(res.songs[0]?.title).toBe("Runaway");
       expect(res.songs[0]?.artist).toBe("Kanye West");
       expect(res.songs[0]?.score).toBe(96);
+      // list rows carry no artist thumbnails on AOTY
+      expect(res.songs[0]?.artistImage).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it("enriches song with full-size artist image from the artist page", async () => {
+    const songHtml = `
+      <h1 class="songTitle">Ghost Town</h1>
+      <div class="albumHeader song"><div class="artist"><a href="/artist/183-kanye-west/">Kanye West</a></div></div>
+      <div class="albumHeaderCover"><img src="https://cdn.aoty.org/ye.jpg" /></div>
+    `;
+    const artistHtml = `
+      <meta property="og:image" content="https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg" />
+      <meta property="og:url" content="https://www.albumoftheyear.org/artist/183-kanye-west/" />
+      <h1 class="artistHeadline">Kanye West</h1>
+    `;
+
+    const restore = mockFetch(async (input) => {
+      const u = String(input);
+      if (u.includes("/artist/")) return new Response(artistHtml, { status: 200 });
+      return new Response(songHtml, { status: 200 });
+    });
+    try {
+      const song = await scrapeSongPage("https://www.albumoftheyear.org/song/2580-ghost-town/");
+      expect(song.artist).toBe("Kanye West");
+      expect(song.artistImage).toBe("https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg");
     } finally {
       restore();
     }
@@ -164,6 +194,7 @@ describe("song scrapers unit tests", () => {
       expect(res.songs[0]?.url).toContain("/song/880447-the-subway/");
       expect(res.songs[0]?.points).toBe(68);
       expect(res.songs[0]?.listsCount).toBe(12);
+      expect(res.songs[0]?.artistImage).toBeNull();
     } finally {
       restore();
     }

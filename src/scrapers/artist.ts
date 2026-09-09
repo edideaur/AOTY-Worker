@@ -1,5 +1,5 @@
-import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, parseCount, parseScore, parseRank, type FetchOpts } from "../constants.js";
-import type { AlbumBlock, ArtistDetail, DiscographySection, NewsItem, SearchArtist, TopSong } from "../types.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, cleanImageUrl, decodeEntities, parseCount, parseScore, parseRank, type FetchOpts } from "../constants.js";
+import type { AlbumBlock, ArtistDetail, ArtistLink, DiscographySection, NewsItem, SearchArtist, TopSong } from "../types.js";
 import { scrapeAlbumBlocks } from "./albumBlock.js";
 import { scrapeNewsPage } from "./news.js";
 
@@ -23,7 +23,7 @@ async function scrapeArtistBlocksFrom(res: Response): Promise<SearchArtist[]> {
     })
     .on(".artistBlock img", {
       element(el) {
-        if (current) current.image = el.getAttribute("src") ?? null;
+        if (current) current.image = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".artistBlock .name", {
@@ -33,7 +33,7 @@ async function scrapeArtistBlocksFrom(res: Response): Promise<SearchArtist[]> {
     })
     .transform(res)
     .arrayBuffer();
-  return artists.map((a) => ({ ...a, name: decodeEntities((a.name ?? "").trim()) }));
+  return artists.map((a) => ({ ...a, name: decodeEntities((a.name ?? "").trim()), image: cleanImageUrl(a.image ?? null) }));
 }
 
 export async function scrapeSimilarArtists(slug: string, opts: FetchOpts = FETCH_OPTS, page = 1): Promise<SearchArtist[]> {
@@ -59,7 +59,7 @@ export async function scrapeArtistTopSongs(url: string, opts: FetchOpts = FETCH_
     })
     .on(".coverart img", {
       element(el) {
-        if (cur) cur.cover = el.getAttribute("src") ?? null;
+        if (cur) cur.cover = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".songAlbum", {
@@ -119,12 +119,63 @@ export async function scrapeArtistTopSongs(url: string, opts: FetchOpts = FETCH_
       url: s.url ?? "",
       artist: decodeEntities((s.artist ?? "").trim()),
       artistUrl: s.artistUrl ?? "",
+      artistImage: null,
       album: s.album ? decodeEntities((s.album as string).trim()) : null,
       albumUrl: s.albumUrl ?? null,
-      cover: s.cover ?? null,
+      cover: cleanImageUrl(s.cover ?? null),
       score: parseScore((s.score ?? "").trim()),
       ratingCount: parseCount((s.ratingCount ?? "").trim()),
     }));
+}
+
+/** Fetch an artist page and return its full-size image (og:image preferred, /sq/ stripped). Null when missing or on any failure. */
+export async function fetchArtistImage(artistUrl: string, opts: FetchOpts = FETCH_OPTS): Promise<string | null> {
+  if (!artistUrl?.includes("/artist/")) return null;
+  try {
+    const res = await fetch(artistUrl, opts);
+    if (!res.ok) return null;
+    const html = await res.text();
+    // Guard: only trust pages that are actually artist pages (mocks in tests return other HTML).
+    // Note: AOTY emits <link href="..." rel="canonical" /> (href first), so match the tag then href.
+    const canonicalTag = html.match(/<link[^>]*rel="canonical"[^>]*>/i)?.[0] ?? "";
+    const canonical = canonicalTag.match(/href="([^"]+)"/i)?.[1] ?? html.match(/<meta property="og:url" content="([^"]+)"/i)?.[1] ?? "";
+    if (canonical && !canonical.includes("/artist/")) return null;
+    if (!canonical && !html.includes("artistHeadline") && !html.includes('"@type": "MusicGroup"') && !html.includes('"@type":"MusicGroup"')) return null;
+    const head = html.split("</head>")[0] ?? html;
+    const og = head.match(/<meta property="og:image" content="([^"]+)"/i)?.[1] ?? head.match(/<link rel="image_src" href="([^"]+)"/i)?.[1];
+    if (og) return cleanImageUrl(og);
+    const ld = html.match(/"image"\s*:\s*"([^"]+)"/)?.[1];
+    if (ld) return cleanImageUrl(ld);
+    const m = html.match(/<div class="artistImage">[\s\S]*?<img[^>]+src="([^"]+)"/i);
+    return m?.[1] ? cleanImageUrl(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fill `image` on artist reference links from an in-payload URL→image lookup
+ * (e.g. similar artists on the same page, full album credits). Matched by
+ * normalized artist URL, first image wins, existing images kept. No fetching,
+ * so unmatched links stay null. Mutates `links` in place.
+ */
+export function applyArtistImages(
+  links: ArtistLink[],
+  sources: Array<{ url: string; image: string | null }>,
+): void {
+  const byUrl = new Map<string, string>();
+  for (const src of sources) {
+    if (!src.url || !src.image) continue;
+    const key = src.url.replace(/\/+$/, "");
+    if (!byUrl.has(key)) byUrl.set(key, src.image);
+  }
+  if (byUrl.size === 0) return;
+  for (const link of links) {
+    if (!link.image && link.url) {
+      const hit = byUrl.get(link.url.replace(/\/+$/, ""));
+      if (hit) link.image = hit;
+    }
+  }
 }
 
 export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_OPTS): Promise<ArtistDetail> {
@@ -149,8 +200,8 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     website: null as string | null,
     detailLinkBuf: null as { name: string; url: string } | null,
     detailLinkKind: null as "member" | "former" | "genre" | null,
-    sections: [] as Array<{ title: string; albums: Array<{ url: string; artist: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean }> }>,
-    section: null as { title: string; albums: Array<{ url: string; artist: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean }> } | null,
+    sections: [] as Array<{ title: string; albums: Array<{ url: string; artist: string; artistUrl: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean }> }>,
+    section: null as { title: string; albums: Array<{ url: string; artist: string; artistUrl: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean }> } | null,
     similarArtists: [] as SearchArtist[],
     simCurrent: null as SearchArtist | null,
     topSongs: [] as Array<{ rank: string; title: string; url: string; artist: string; artistUrl: string; album: string | null; albumUrl: string | null; cover: string | null; score: string | null; ratingCount: string | null }>,
@@ -166,7 +217,7 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     })
     .on(".artistImage img", {
       element(el) {
-        if (!s.image) s.image = el.getAttribute("src") ?? null;
+        if (!s.image) s.image = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".artistCriticScore", {
@@ -253,7 +304,7 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     })
     .on(".section.relatedArtists .artistBlock img", {
       element(el) {
-        if (s.simCurrent) s.simCurrent.image = el.getAttribute("src") ?? null;
+        if (s.simCurrent) s.simCurrent.image = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".section.relatedArtists .artistBlock .name", {
@@ -270,7 +321,7 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     })
     .on(".trackListTable .coverart img", {
       element(el) {
-        if (s.songCurrent) s.songCurrent.cover = el.getAttribute("src") ?? null;
+        if (s.songCurrent) s.songCurrent.cover = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".trackListTable .songAlbum a", {
@@ -315,11 +366,11 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     .arrayBuffer();
 
   const rowMatches = [...html.matchAll(/<div class="detailRow">(.*?)<\/div>/gs)].map((m) => m[1]);
-  const members: Array<{ name: string; url: string }> = [];
-  const formerMembers: Array<{ name: string; url: string }> = [];
-  const memberOf: Array<{ name: string; url: string }> = [];
-  const formerlyOf: Array<{ name: string; url: string }> = [];
-  const relatedArtists: Array<{ name: string; url: string }> = [];
+  const members: ArtistLink[] = [];
+  const formerMembers: ArtistLink[] = [];
+  const memberOf: ArtistLink[] = [];
+  const formerlyOf: ArtistLink[] = [];
+  const relatedArtists: ArtistLink[] = [];
   const genres: Array<{ name: string; url: string }> = [];
   let aka: string[] = [];
   let website: string | null = s.website;
@@ -333,19 +384,19 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     });
     if (row.includes("/ Members") || row.includes("/&nbsp;Members")) {
       for (const l of links)
-        if (l.href.includes("/artist/")) members.push({ name: l.name, url: l.href.startsWith("http") ? l.href : BASE + l.href });
+        if (l.href.includes("/artist/")) members.push({ name: l.name, url: l.href.startsWith("http") ? l.href : BASE + l.href, image: null });
     } else if (row.includes("Former Members")) {
       for (const l of links)
-        if (l.href.includes("/artist/")) formerMembers.push({ name: l.name, url: l.href.startsWith("http") ? l.href : BASE + l.href });
+        if (l.href.includes("/artist/")) formerMembers.push({ name: l.name, url: l.href.startsWith("http") ? l.href : BASE + l.href, image: null });
     } else if (row.includes("Member Of")) {
       for (const l of links)
-        if (l.href.includes("/artist/")) memberOf.push({ name: l.name, url: l.href.startsWith("http") ? l.href : BASE + l.href });
+        if (l.href.includes("/artist/")) memberOf.push({ name: l.name, url: l.href.startsWith("http") ? l.href : BASE + l.href, image: null });
     } else if (row.includes("Formerly Of")) {
       for (const l of links)
-        if (l.href.includes("/artist/")) formerlyOf.push({ name: l.name, url: l.href.startsWith("http") ? l.href : BASE + l.href });
+        if (l.href.includes("/artist/")) formerlyOf.push({ name: l.name, url: l.href.startsWith("http") ? l.href : BASE + l.href, image: null });
     } else if (row.includes("Related Artists")) {
       for (const l of links)
-        if (l.href.includes("/artist/")) relatedArtists.push({ name: l.name, url: l.href.startsWith("http") ? l.href : BASE + l.href });
+        if (l.href.includes("/artist/")) relatedArtists.push({ name: l.name, url: l.href.startsWith("http") ? l.href : BASE + l.href, image: null });
     } else if (row.includes("Genre")) {
       for (const l of links)
         if (l.href.includes("/genre/")) genres.push({ name: l.name, url: l.href.startsWith("http") ? l.href : BASE + l.href });
@@ -375,7 +426,7 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
   }
 
   // Discography sections: scrape album blocks per section with a section-aware pass.
-  type RawBlock = { url: string; artist: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean };
+  type RawBlock = { url: string; artist: string; artistUrl: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean };
   const sections: Array<{ title: string; albums: RawBlock[] }> = [];
   let curSection: { title: string; albums: RawBlock[] } | null = null;
   let cur: RawBlock | null = null;
@@ -393,7 +444,7 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     })
     .on(".albumBlock", {
       element(el) {
-        cur = { url: "", artist: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false };
+        cur = { url: "", artist: "", artistUrl: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false };
         if (curSection) curSection.albums.push(cur);
         lastRatingType = null;
         ratingValue = "";
@@ -409,7 +460,7 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     })
     .on(".albumBlock .image img", {
       element(el) {
-        if (cur) cur.cover = el.getAttribute("src") || el.getAttribute("data-src") || "";
+        if (cur) cur.cover = cleanImageUrl(el.getAttribute("src") || el.getAttribute("data-src") || "") || "";
       },
     })
     .on(".albumBlock .image .mustHear", {
@@ -420,6 +471,14 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     .on(".albumBlock .artistTitle", {
       text(t) {
         if (cur) cur.artist = (cur.artist ?? "") + t.text;
+      },
+    })
+    .on(".albumBlock a", {
+      element(el) {
+        const href = el.getAttribute("href") ?? "";
+        if (cur && !cur.artistUrl && href.includes("/artist/")) {
+          cur.artistUrl = href.startsWith("http") ? href : BASE + href;
+        }
       },
     })
     .on(".albumBlock .albumTitle", {
@@ -467,6 +526,8 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     albums: sec.albums.map((a) => ({
       url: a.url,
       artist: decodeEntities(a.artist.trim()) || decodeEntities(s.name.trim()),
+      artistUrl: a.artistUrl,
+      artistImage: null,
       title: decodeEntities(a.title.trim()),
       cover: a.cover,
       mediaType: a.mediaType,
@@ -488,6 +549,8 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
         albums: sec.albums.map((a) => ({
           url: a.url,
           artist: decodeEntities(a.artist.trim()) || decodeEntities(s.name.trim()),
+          artistUrl: a.artistUrl ?? "",
+          artistImage: null,
           title: decodeEntities(a.title.trim()),
           cover: a.cover,
           mediaType: a.mediaType,
@@ -502,10 +565,17 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
     }
   }
 
+  // Member/affiliation rows carry text-only links on AOTY; reuse images from the
+  // similar-artists section on the same page wherever the artist URL matches.
+  const similarArtists = s.similarArtists.map((a) => ({ ...a, name: decodeEntities((a.name ?? "").trim()), image: cleanImageUrl(a.image ?? null) }));
+  for (const list of [members, formerMembers, memberOf, formerlyOf, relatedArtists]) {
+    applyArtistImages(list, similarArtists);
+  }
+
   return {
     url: pageUrl,
     name: decodeEntities(s.name.trim()),
-    image: s.image,
+    image: cleanImageUrl(s.image),
     criticScore: parseScore(s.criticScore.trim()),
     criticCount: parseCount(s.criticCount),
     userScore: parseScore(s.userScore.trim()),
@@ -529,13 +599,14 @@ export async function scrapeArtistPage(pageUrl: string, opts: FetchOpts = FETCH_
         url: song.url ?? "",
         artist: decodeEntities((song.artist ?? "").trim()) || decodeEntities(s.name.trim()),
         artistUrl: song.artistUrl ?? "",
+        artistImage: null,
         album: song.album ? decodeEntities((song.album as string).trim()) : null,
         albumUrl: song.albumUrl ?? null,
-        cover: song.cover ?? null,
+        cover: cleanImageUrl(song.cover ?? null),
         score: parseScore((song.score ?? "").trim()),
         ratingCount: parseCount((song.ratingCount ?? "").trim()),
       })),
-    similarArtists: s.similarArtists.map((a) => ({ ...a, name: decodeEntities((a.name ?? "").trim()) })),
+    similarArtists,
   };
 }
 

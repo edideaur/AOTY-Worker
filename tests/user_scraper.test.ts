@@ -131,6 +131,28 @@ describe("user scrapers unit tests", () => {
     }
   });
 
+  it("strips CDN size prefixes from user album block covers", async () => {
+    const html = `
+      <div class="albumBlock" data-type="LP">
+        <div class="image"><a href="/album/1-okc/"><img src="https://cdn2.albumoftheyear.org/200x0/album/1-ok-computer_123.jpg" /></a></div>
+        <div class="artistTitle">Radiohead</div>
+        <div class="albumTitle">OK Computer</div>
+        <div class="type functions">1997</div>
+      </div>
+    `;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(html, { status: 200 });
+
+    try {
+      const res = await scrapeUserRatings("musicgeek", undefined, { page: 1 });
+      expect(res.ratings.length).toBe(1);
+      expect(res.ratings[0].cover).toBe("https://cdn2.albumoftheyear.org/album/1-ok-computer_123.jpg");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("parses user listened and user library", async () => {
     const html = `
       <div class="albumBlock">
@@ -645,6 +667,30 @@ describe("user scrapers unit tests", () => {
       expect(res.tracks[0]?.title).toBe("Weather for Tennis");
       expect(res.tracks[0]?.length).toBe("3:16");
       expect(res.tracks[0]?.score).toBe(100);
+    } finally {
+      restore();
+    }
+  });
+
+  it("parses featured-artist links in user track ratings", async () => {
+    const html = `
+      <div class="albumHeadline small"><h1 class="albumTitle"><a href="/album/1-x.php">Artist - Album</a></h1></div>
+      <table class="trackListTable">
+        <tr>
+          <td class="trackNumber">1</td>
+          <td class="trackTitle"><a href="/song/1-track/">Track One</a><div class="length">3:00</div><div class="featuredArtists">feat. <a href="/artist/5-guest/">Guest Star</a></div></td>
+          <td class="trackRating"><span class="green-font">90</span></td>
+        </tr>
+      </table>
+    `;
+    const restore = mockFetch(async () => new Response(html, { status: 200 }));
+    try {
+      const res = await scrapeUserAlbumTrackRatings("512173", "1");
+      expect(res.tracks.length).toBe(1);
+      expect(res.tracks[0]?.features).toEqual(["Guest Star"]);
+      expect(res.tracks[0]?.featureLinks).toEqual([
+        { name: "Guest Star", url: "https://www.albumoftheyear.org/artist/5-guest/", image: null },
+      ]);
     } finally {
       restore();
     }

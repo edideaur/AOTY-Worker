@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, decodeEntities, parseCount, parseId, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, cleanImageUrl, decodeEntities, parseCount, parseId, type FetchOpts } from "../constants.js";
 import type { NewsItem, RssFeed, RssFeedItem } from "../types.js";
 
 type RawNewsItem = {
@@ -47,7 +47,7 @@ export async function scrapeNewsPage(url: string, opts: FetchOpts = FETCH_OPTS):
       text(t) { if (current) current.title += t.text; },
     })
     .on(".mediaContainer .image img", {
-      element(el) { if (current) current.image = el.getAttribute("src") ?? null; },
+      element(el) { if (current) current.image = cleanImageUrl(el.getAttribute("src") ?? null); },
     })
     .on(".mediaContainer .source a", {
       element(el) { if (current) current.sourceUrl = el.getAttribute("href") ?? ""; },
@@ -69,7 +69,7 @@ export async function scrapeNewsPage(url: string, opts: FetchOpts = FETCH_OPTS):
     id: parseId(item.id) ?? 0,
     url: item.url,
     title: decodeEntities((item.title ?? "").trim()),
-    image: item.image,
+    image: cleanImageUrl(item.image),
     source: decodeEntities((item.source ?? "").trim()),
     sourceUrl: item.sourceUrl,
     date: (item.date ?? "").trim(),

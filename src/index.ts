@@ -7,7 +7,7 @@ import { scrapeNewsPage, scrapeNewsFeed, scrapeNewsFeedXml } from "./scrapers/ne
 import { scrapeListsIndex, scrapeListDetail, scrapeYearEndSummary, scrapeCommunityYearEnd } from "./scrapers/lists.js";
 import { scrapeArtistSearch, scrapeLabelAutocomplete, scrapeLabelSearch, scrapeSearchAutocomplete, scrapeUserSearch } from "./scrapers/search.js";
 import { scrapeAlbumStats, scrapeAlbumCredits, scrapeAlbumRatingHistory, scrapeAlbumDistribution, scrapeAlbumUsers, scrapeAlbumImages } from "./scrapers/albumExtras.js";
-import { scrapeArtistPage, scrapeArtistTopSongs, scrapeSimilarArtists, scrapeArtistNews, scrapeArtistCredits, listArtistCreditRoles, scrapeRandomArtist, scrapeArtistDiscography } from "./scrapers/artist.js";
+import { scrapeArtistPage, scrapeArtistTopSongs, scrapeSimilarArtists, scrapeArtistNews, scrapeArtistCredits, listArtistCreditRoles, scrapeRandomArtist, scrapeArtistDiscography, applyArtistImages, fetchArtistImage } from "./scrapers/artist.js";
 import {
   scrapeArtistsOverview,
   scrapeCriticPage,
@@ -635,14 +635,24 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
       throw new ApiError("Provide either slug (ID or full slug) or both artist and name", 400);
     }
 
-    const detail = await scrapeAlbumPage(albumUrl, opts);
+    // Artist image + stats + credits fan out in parallel; the scraper skips its own
+    // sequential lookup here (minimal also skips it entirely).
+    const detail = await scrapeAlbumPage(albumUrl, opts, false);
     if (!minimal && detail.id) {
-      const [stats, credits] = await Promise.all([
+      const [stats, credits, artistImage] = await Promise.all([
         scrapeAlbumStats(detail.id),
         scrapeAlbumCredits(detail.id),
+        fetchArtistImage(detail.artistUrl, opts),
       ]);
       detail.stats = stats;
       detail.credits = credits;
+      detail.artistImage = artistImage;
+      // Summary producer/writer rows are text-only links; reuse credit photos by artist URL.
+      if (credits) {
+        const photos = credits.flatMap((section) => section.credits);
+        applyArtistImages(detail.producers, photos);
+        applyArtistImages(detail.writers, photos);
+      }
     }
     return detail;
   }
@@ -1540,6 +1550,8 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return {
       slug: norm ?? (detail.url.match(/\/album\/([^/]+)/)?.[1] ?? null),
       artist: detail.artist,
+      artistUrl: detail.artistUrl,
+      artistImage: detail.artistImage,
       title: detail.title,
       url: detail.url,
       tracklist: detail.tracklist,
@@ -1565,6 +1577,8 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return {
       slug: norm ?? (detail.url.match(/\/album\/([^/]+)/)?.[1] ?? null),
       artist: detail.artist,
+      artistUrl: detail.artistUrl,
+      artistImage: detail.artistImage,
       title: detail.title,
       url: detail.url,
       streamingLinks: detail.streamingLinks,
@@ -1674,7 +1688,7 @@ function computeEtag(text: string): string {
 
 export function sanitizeImageUrls<T>(val: T): T {
   if (typeof val === "string") {
-    if (val.includes("albumoftheyear.org") && (/\/\d+x\d+\//.test(val) || val.includes("/cdn-cgi/image/"))) {
+    if (val.includes("albumoftheyear.org") && (/\/\d+x\d+\//.test(val) || val.includes("/cdn-cgi/image/") || val.includes("/sq/"))) {
       return cleanImageUrl(val) as unknown as T;
     }
     return val;

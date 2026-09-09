@@ -174,6 +174,6 @@ Interactive docs are served at `/` via [Scalar](https://scalar.com). The raw Ope
 
 ## Notes
 
-The `/album` endpoint calls two additional PHP endpoints for stats (favorites, likes, listens, library count, lists) and credits (performers, songwriters, producers). Pass `minimal=true` to skip those and return only HTML-scraped data.
+The `/album` endpoint calls two additional PHP endpoints for stats (favorites, likes, listens, library count, lists) and credits (performers, songwriters, producers), plus one artist page fetch for the full-size `artistImage` (AOTY serves `/sq/` square thumbnails, which the API strips). Pass `minimal=true` to skip those and return only album-page HTML-scraped data (`stats`, `credits` and `artistImage` will be null).
 
 Both PHP endpoints require same-origin session cookies to return data. Without auth cookies they will return null for `stats` and `credits`.

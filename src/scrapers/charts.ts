@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, decodeEntities, parseCount, parseId, parseRank, parseScore, parseExactScore, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, cleanImageUrl, decodeEntities, parseCount, parseId, parseRank, parseScore, parseExactScore, type FetchOpts } from "../constants.js";
 import type { ChartItem, RatingGenresResult, RatingSourcesResult, SearchArtist } from "../types.js";
 
 type RawChartItem = {
@@ -45,7 +45,7 @@ export async function scrapeRatingsChart(aotyPath: string, opts: FetchOpts = FET
     })
     .on(".albumListCover img", {
       element(el) {
-        if (cur) cur.cover = el.getAttribute("src") ?? null;
+        if (cur) cur.cover = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".albumListDate", {
@@ -136,7 +136,7 @@ export async function scrapeTopArtists(genre: string | null, scope: string, opts
     })
     .on(".artistBlock img", {
       element(el) {
-        if (cur) cur.image = el.getAttribute("src") ?? null;
+        if (cur) cur.image = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".artistBlock .name", {
@@ -146,7 +146,7 @@ export async function scrapeTopArtists(genre: string | null, scope: string, opts
     })
     .transform(res)
     .arrayBuffer();
-  return artists.map((a) => ({ ...a, name: decodeEntities((a.name ?? "").trim()) }));
+  return artists.map((a) => ({ ...a, name: decodeEntities((a.name ?? "").trim()), image: cleanImageUrl(a.image ?? null) }));
 }
 
 export async function scrapeRatingSources(

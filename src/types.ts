@@ -1,6 +1,8 @@
 export interface AlbumBlock {
   url: string;
   artist: string;
+  artistUrl: string;
+  artistImage: string | null;
   title: string;
   cover: string;
   mediaType: string;
@@ -21,6 +23,7 @@ export interface Track {
   ratingCount: number | null;
   notes: string | null;
   features: string[];
+  featureLinks: ArtistLink[];
 }
 
 export interface CriticReview {
@@ -139,6 +142,7 @@ export interface AlbumDetail {
   title: string;
   artist: string;
   artistUrl: string;
+  artistImage: string | null;
   cover: string;
   datePublished: string;
   dateCreated?: string | null;
@@ -151,9 +155,8 @@ export interface AlbumDetail {
   secondaryGenres?: string[];
   tags: string[];
   vibes: string[];
-  producers: NamedLink[];
-  writers: NamedLink[];
-  totalLength: string | null;
+  producers: ArtistLink[];
+  writers: ArtistLink[];  totalLength: string | null;
   criticScore: number | null;
   criticScoreExact: number | null;
   criticCount: number | null;
@@ -229,6 +232,13 @@ export interface NamedLink {
   url: string;
 }
 
+/** Artist reference with optional image. Image is null where AOTY renders text-only links. */
+export interface ArtistLink {
+  name: string;
+  url: string;
+  image: string | null;
+}
+
 export interface DiscographySection {
   title: string;
   albums: AlbumBlock[];
@@ -245,11 +255,11 @@ export interface ArtistDetail {
   followers: number | null;
   genres: NamedLink[];
   alsoKnownAs: string[];
-  members: NamedLink[];
-  formerMembers: NamedLink[];
-  memberOf: NamedLink[];
-  formerlyOf: NamedLink[];
-  relatedArtists: NamedLink[];
+  members: ArtistLink[];
+  formerMembers: ArtistLink[];
+  memberOf: ArtistLink[];
+  formerlyOf: ArtistLink[];
+  relatedArtists: ArtistLink[];
   tags: NamedLink[];
   website: string | null;
   sections: DiscographySection[];
@@ -320,6 +330,7 @@ export interface PublicationReview {
   albumUrl: string;
   artist: string;
   artistUrl: string;
+  artistImage: string | null;
   cover: string | null;
   score: number | null;
   reviewUrl: string;
@@ -343,6 +354,7 @@ export interface CriticReviewEntry {
   albumUrl: string;
   artist: string;
   artistUrl: string;
+  artistImage: string | null;
   cover: string | null;
   score: number | null;
   text: string;
@@ -363,7 +375,7 @@ export interface CriticDetail {
 
 export interface SongCredit {
   role: string;
-  artists: NamedLink[];
+  artists: ArtistLink[];
 }
 
 export interface SongRating {
@@ -388,6 +400,7 @@ export interface SongDetail {
   title: string;
   artist: string;
   artistUrl: string;
+  artistImage: string | null;
   cover: string | null;
   album: string | null;
   albumUrl: string | null;
@@ -413,6 +426,7 @@ export interface TopSong {
   url: string;
   artist: string;
   artistUrl: string;
+  artistImage: string | null;
   album: string | null;
   albumUrl: string | null;
   cover: string | null;
@@ -454,6 +468,7 @@ export interface UserReview {
   url: string;
   artist: string;
   artistUrl: string;
+  artistImage: string | null;
   album: string;
   albumUrl: string;
   cover: string | null;
@@ -503,6 +518,7 @@ export interface UserListDetailItem {
   rank: number;
   artist: string;
   artistUrl: string;
+  artistImage: string | null;
   title: string;
   url: string;
   cover: string | null;
@@ -686,6 +702,7 @@ export interface YearEndAggregateItem {
   rank: number;
   artist: string;
   artistUrl: string;
+  artistImage: string | null;
   album: string;
   albumUrl: string;
   cover: string | null;
@@ -711,7 +728,8 @@ export interface SongsBestItem {
   rank: number;
   artist: string;
   artistUrl: string;
-  artists: NamedLink[];
+  artistImage: string | null;
+  artists: ArtistLink[];
   title: string;
   url: string;
   cover: string | null;
@@ -729,6 +747,7 @@ export interface UserYearEndAlbum {
   rank: number;
   artist: string;
   artistUrl: string;
+  artistImage: string | null;
   album: string;
   albumUrl: string;
   cover: string | null;
@@ -827,6 +846,7 @@ export interface UserTrackRatingEntry {
   length: string;
   score: number | null;
   features: string[];
+  featureLinks: ArtistLink[];
 }
 
 export interface UserAlbumTrackRatingsResult {

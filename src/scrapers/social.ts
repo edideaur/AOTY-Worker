@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, parseCount, parseId, parseRank, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, cleanImageUrl, decodeEntities, parseCount, parseId, parseRank, type FetchOpts } from "../constants.js";
 import type {
   AllCommentsResult,
   AotyComment,
@@ -45,7 +45,7 @@ export async function scrapeAlbumCriticLists(albumSlug: string, opts: FetchOpts 
     .on(".listPub .listLogo img", {
       element(el) {
         if (st.cur) {
-          st.cur.cover = el.getAttribute("src") ?? null;
+          st.cur.cover = cleanImageUrl(el.getAttribute("src") ?? null);
           const alt = el.getAttribute("alt") ?? "";
           if (alt) st.cur.title = alt;
         }
@@ -342,7 +342,7 @@ export async function scrapeNewsDetail(slug: string, opts: FetchOpts = FETCH_OPT
     })
     .on(".mediaHeader .image img", {
       element(el) {
-        if (!s.image) s.image = el.getAttribute("src") ?? null;
+        if (!s.image) s.image = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".mediaByline .mediaDate", {
@@ -405,7 +405,7 @@ export async function scrapeNewsDetail(slug: string, opts: FetchOpts = FETCH_OPT
     source: decodeEntities(s.source.trim()),
     sourceUrl: s.sourceUrl,
     date: s.date.trim(),
-    image: s.image,
+    image: cleanImageUrl(s.image),
     text: decodeEntities(s.text.trim()),
     likes: parseCount(s.likes.trim()) ?? 0,
     embedUrl: s.embedUrl,
@@ -439,7 +439,7 @@ export async function scrapeSearchNews(query: string, opts: FetchOpts = FETCH_OP
     })
     .on(".newsBlockLarge img", {
       element(el) {
-        if (cur) cur.image = el.getAttribute("data-src") || el.getAttribute("src") || null;
+        if (cur) cur.image = cleanImageUrl(el.getAttribute("data-src") || el.getAttribute("src") || null);
       },
     })
     .on(".newsBlockLarge .domain", {
@@ -458,7 +458,7 @@ export async function scrapeSearchNews(query: string, opts: FetchOpts = FETCH_OP
         title: decodeEntities((i.title ?? "").trim()),
         url: i.url ?? "",
         source: (i.source ?? "").trim() || null,
-        image: i.image && !i.image.includes("white.gif") ? i.image : null,
+        image: cleanImageUrl(i.image && !i.image.includes("white.gif") ? i.image : null),
       })),
   };
 }
@@ -535,7 +535,7 @@ export async function scrapeSiteUpdates(opts: FetchOpts = FETCH_OPTS, filter: st
     })
     .on(".upd .updImage img", {
       element(el) {
-        if (cur) cur.image = el.getAttribute("src") ?? null;
+        if (cur) cur.image = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".upd .updText p", {
@@ -559,7 +559,7 @@ export async function scrapeSiteUpdates(opts: FetchOpts = FETCH_OPTS, filter: st
       url: u.url ?? "",
       artist: u.artist ? decodeEntities((u.artist as string).trim()) : null,
       artistUrl: u.artistUrl ?? null,
-      image: u.image ?? null,
+      image: cleanImageUrl(u.image ?? null),
       meta: (u.meta ?? "").trim() || null,
       timeAgo: (u.timeAgo ?? "").trim() || null,
     })),

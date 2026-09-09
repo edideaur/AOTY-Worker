@@ -1,4 +1,4 @@
-import { BASE, decodeEntities, parseCount, parseId } from "../constants.js";
+import { BASE, cleanImageUrl, decodeEntities, parseCount, parseId } from "../constants.js";
 import type { AotyComment } from "../types.js";
 
 type RawComment = {
@@ -32,7 +32,7 @@ export async function scrapeCommentRows(res: Response): Promise<AotyComment[]> {
     })
     .on(".commentRow .commentImage img", {
       element(el) {
-        if (st.cur) st.cur.avatar = el.getAttribute("src") ?? null;
+        if (st.cur) st.cur.avatar = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".commentRow .commentUserName a", {
@@ -65,7 +65,7 @@ export async function scrapeCommentRows(res: Response): Promise<AotyComment[]> {
     id: parseId(c.id) ?? 0,
     username: decodeEntities((c.username ?? "").trim()),
     userUrl: c.userUrl ?? "",
-    avatar: c.avatar ?? null,
+    avatar: cleanImageUrl(c.avatar ?? null),
     date: (c.date ?? "").trim(),
     dateExact: c.dateExact ?? "",
     text: decodeEntities((c.text ?? "").trim()),

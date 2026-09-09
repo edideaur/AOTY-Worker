@@ -409,7 +409,8 @@ export function cleanImageUrl<T extends string | null | undefined>(url: T): T {
   if (!url) return url;
   return url
     .replace(/\/cdn-cgi\/image\/[^/]+\//g, "/")
-    .replace(/\/\d+x\d+\//g, "/") as T;
+    .replace(/\/\d+x\d+\//g, "/")
+    .replace(/\/sq\//g, "/") as T;
 }
 
 /**

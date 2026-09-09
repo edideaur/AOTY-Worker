@@ -4,6 +4,7 @@ import type { AlbumBlock } from "../types.js";
 type RawAlbumBlock = {
   url: string;
   artist: string;
+  artistUrl: string;
   title: string;
   cover: string;
   mediaType: string;
@@ -27,6 +28,7 @@ export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
         cur = {
           url: "",
           artist: "",
+          artistUrl: "",
           title: "",
           cover: "",
           mediaType: el.getAttribute("data-type") ?? "",
@@ -63,6 +65,16 @@ export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
     .on(".albumBlock .artistTitle", {
       text(t) {
         if (cur) cur.artist = (cur.artist ?? "") + t.text;
+      },
+    })
+    .on(".albumBlock a", {
+      element(el) {
+        // artistTitle is sometimes a link (or wrapped in one); first /artist/ href wins.
+        // Plain-text artist names leave artistUrl empty.
+        const href = el.getAttribute("href") ?? "";
+        if (cur && !cur.artistUrl && href.includes("/artist/")) {
+          cur.artistUrl = href.startsWith("http") ? href : BASE + href;
+        }
       },
     })
     .on(".albumBlock .albumTitle", {
@@ -108,6 +120,8 @@ export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
   return rawAlbums.map((a) => ({
     url: a.url,
     artist: decodeEntities(a.artist.trim()),
+    artistUrl: a.artistUrl,
+    artistImage: null,
     title: decodeEntities(a.title.trim()),
     releaseDate: decodeEntities(a.releaseDate.trim()),
     cover: cleanImageUrl(a.cover.trim()),

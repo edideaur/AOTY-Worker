@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, parseCount, parseScore, parseExactScore, parseId, parsePercent, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, cleanImageUrl, decodeEntities, parseCount, parseScore, parseExactScore, parseId, parsePercent, type FetchOpts } from "../constants.js";
 import type {
   AlbumStats,
   CreditEntry,
@@ -82,7 +82,7 @@ export async function scrapeAlbumCredits(albumId: string | number): Promise<Cred
         },
       })
       .on(".credit .photo img", {
-        element(el) { if (c.credit) c.credit.image = el.getAttribute("src") ?? null; },
+        element(el) { if (c.credit) c.credit.image = cleanImageUrl(el.getAttribute("src") ?? null); },
       })
       .on(".credit .name a[href*='/artist/']", {
         element(el) {
@@ -110,6 +110,7 @@ export async function scrapeAlbumCredits(albumId: string | number): Promise<Cred
       section.title = decodeEntities(section.title.trim());
       for (const credit of section.credits) {
         credit.name = decodeEntities(credit.name.trim());
+        credit.image = cleanImageUrl(credit.image);
       }
     }
 
@@ -265,7 +266,7 @@ export async function scrapeAlbumUsers(
       users.push({
         username: decodeEntities(nameM[1].trim()),
         url: linkM[1].startsWith("http") ? linkM[1] : BASE + linkM[1],
-        avatar: imgM?.[1] ?? null,
+        avatar: cleanImageUrl(imgM?.[1] ?? null),
       });
     }
   }
@@ -286,7 +287,7 @@ export async function scrapeAlbumImages(
   const html = await res.text();
 
   const mainImageM = html.match(/<div id="curImage"><img [^>]*src="([^"]+)"/i);
-  const mainImage = mainImageM?.[1] ?? null;
+  const mainImage = mainImageM?.[1] ? cleanImageUrl(mainImageM[1]) : null;
 
   const images: AlbumImageItem[] = [];
   for (const m of html.matchAll(/<div id="img_(\d+)" class="thumbnail([^"]*)">[\s\S]*?<img [^>]*src="([^"]+)"[^>]*alt="([^"]*)"[^>]*title="([^"]*)"/g)) {
@@ -299,7 +300,7 @@ export async function scrapeAlbumImages(
       images.push({
         id: parseId(id) ?? 0,
         title: decodeEntities(title || alt || ""),
-        src,
+        src: cleanImageUrl(src),
         isDefault: classes?.includes("selected") ?? false,
       });
     }

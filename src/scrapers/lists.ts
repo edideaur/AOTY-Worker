@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, decodeEntities, parseCount, parseScore, parseExactScore, parseRank, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, cleanImageUrl, decodeEntities, parseCount, parseScore, parseExactScore, parseRank, type FetchOpts } from "../constants.js";
 import type {
   ListDetailItem,
   ListEntry,
@@ -34,7 +34,7 @@ export async function scrapeListsIndex(url: string, opts: FetchOpts = FETCH_OPTS
     .on(".listColumn .listLogo img", {
       element(el) {
         if (current) {
-          current.cover = el.getAttribute("src") ?? null;
+          current.cover = cleanImageUrl(el.getAttribute("src") ?? null);
           current.title = el.getAttribute("alt") ?? "";
         }
       },
@@ -49,6 +49,7 @@ export async function scrapeListsIndex(url: string, opts: FetchOpts = FETCH_OPTS
     ...e,
     title: decodeEntities((e.title ?? "").trim()),
     publication: decodeEntities((e.publication ?? "").trim()),
+    cover: cleanImageUrl(e.cover ?? null),
   }));
 }
 
@@ -113,7 +114,7 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
       text(t) { if (current) current.title += t.text; },
     })
     .on(".albumListCover img", {
-      element(el) { if (current) current.cover = el.getAttribute("src") ?? ""; },
+      element(el) { if (current) current.cover = cleanImageUrl(el.getAttribute("src") ?? ""); },
     })
     .on(".albumListCover .otherLists", {
       text(t) {
@@ -169,7 +170,7 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
         album,
         title: rawTitle,
         url: item.url ?? "",
-        cover: item.cover ?? "",
+        cover: cleanImageUrl(item.cover ?? ""),
         date: (item.date ?? "").trim(),
         genres: [...new Set((item.genres ?? []).map((g) => g.trim()).filter(Boolean))],
         score: parseScore((item.score ?? "").trim()),
@@ -244,9 +245,10 @@ export function parseListSummaryRows(html: string): { totalLists: number | null;
         rank,
         artist,
         artistUrl,
+        artistImage: null,
         album,
         albumUrl,
-        cover,
+        cover: cleanImageUrl(cover),
         points,
         breakdown,
         streamingLinks,

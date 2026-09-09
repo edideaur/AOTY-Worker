@@ -1,4 +1,4 @@
-import { BASE, decodeEntities, parseCount } from "../constants.js";
+import { BASE, cleanImageUrl, decodeEntities, parseCount } from "../constants.js";
 import type { UserListEntry } from "../types.js";
 
 type RawUserListEntry = {
@@ -53,13 +53,13 @@ export async function scrapeUserListRows(res: Response): Promise<UserListEntry[]
     })
     .on(".userListRow .userImage img", {
       element(el) {
-        if (cur) cur.avatar = el.getAttribute("src") ?? null;
+        if (cur) cur.avatar = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".userListRow .covers img", {
       element(el) {
         const src = el.getAttribute("src");
-        if (cur && src) (cur.covers as string[]).push(src);
+        if (cur && src) (cur.covers as string[]).push(cleanImageUrl(src));
       },
     })
     .on(".userListRow .listDescription", {
@@ -84,8 +84,8 @@ export async function scrapeUserListRows(res: Response): Promise<UserListEntry[]
     title: decodeEntities((l.title ?? "").trim()),
     username: decodeEntities((l.username ?? "").trim()),
     userUrl: l.userUrl ?? "",
-    avatar: l.avatar ?? null,
-    covers: l.covers ?? [],
+    avatar: cleanImageUrl(l.avatar ?? null),
+    covers: (l.covers ?? []).map((c) => cleanImageUrl(c)),
     description: l.description ? decodeEntities((l.description as string).trim()) : null,
     likes: parseCount((l.likes ?? "").trim()),
     comments: parseCount((l.comments ?? "").trim()),

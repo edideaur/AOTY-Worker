@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, REQ_HEADERS, decodeEntities, parseCount, parseScore, parseId, parseYear, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, cleanImageUrl, decodeEntities, parseCount, parseScore, parseId, parseYear, type FetchOpts } from "../constants.js";
 import type {
   ArtistsOverviewSection,
   ChartItem,
@@ -40,7 +40,7 @@ export async function scrapeLabelPage(pageUrl: string, opts: FetchOpts = FETCH_O
     })
     .on(".publicationHeader img, .logo img", {
       element(el) {
-        if (!s.image) s.image = el.getAttribute("src") ?? null;
+        if (!s.image) s.image = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".publicationHeader a[href*='http'], .logo a[href*='http'], .labelInfo a[href*='http']", {
@@ -73,7 +73,7 @@ export async function scrapeLabelPage(pageUrl: string, opts: FetchOpts = FETCH_O
   return {
     url: pageUrl,
     name: decodeEntities(s.name.trim()),
-    image: s.image,
+    image: cleanImageUrl(s.image),
     website: s.website,
     parentLabel: s.parentLabel
       ? { name: decodeEntities(s.parentLabel.name.trim()), url: s.parentLabel.url }
@@ -87,7 +87,7 @@ export async function scrapeLabelPage(pageUrl: string, opts: FetchOpts = FETCH_O
 export async function scrapeGenresIndex(opts: FetchOpts = FETCH_OPTS): Promise<GenreIndexItem[]> {
   const res = await fetch(`${BASE}/genre.php`, opts);
   if (!res.ok) throw new Error(`Genres fetch failed: ${res.status}`);
-  type RawBlock = { url: string; artist: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean };
+  type RawBlock = { url: string; artist: string; artistUrl: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean };
   const items: Array<{ name: string; url: string; albums: RawBlock[] }> = [];
   let cur: { name: string; url: string; albums: RawBlock[] } | null = null;
   let curBlock: RawBlock | null = null;
@@ -112,7 +112,7 @@ export async function scrapeGenresIndex(opts: FetchOpts = FETCH_OPTS): Promise<G
     })
     .on(".albumBlock", {
       element(el) {
-        curBlock = { url: "", artist: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false };
+        curBlock = { url: "", artist: "", artistUrl: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false };
         if (cur) cur.albums.push(curBlock);
         lastRatingType = null;
         ratingValue = "";
@@ -128,7 +128,7 @@ export async function scrapeGenresIndex(opts: FetchOpts = FETCH_OPTS): Promise<G
     })
     .on(".albumBlock .image img", {
       element(el) {
-        if (curBlock) curBlock.cover = el.getAttribute("src") || el.getAttribute("data-src") || "";
+        if (curBlock) curBlock.cover = cleanImageUrl(el.getAttribute("src") || el.getAttribute("data-src") || "");
       },
     })
     .on(".albumBlock .image .mustHear", {
@@ -139,6 +139,14 @@ export async function scrapeGenresIndex(opts: FetchOpts = FETCH_OPTS): Promise<G
     .on(".albumBlock .artistTitle", {
       text(t) {
         if (curBlock) curBlock.artist = (curBlock.artist ?? "") + t.text;
+      },
+    })
+    .on(".albumBlock a", {
+      element(el) {
+        const href = el.getAttribute("href") ?? "";
+        if (curBlock && !curBlock.artistUrl && href.includes("/artist/")) {
+          curBlock.artistUrl = href.startsWith("http") ? href : BASE + href;
+        }
       },
     })
     .on(".albumBlock .albumTitle", {
@@ -189,8 +197,10 @@ export async function scrapeGenresIndex(opts: FetchOpts = FETCH_OPTS): Promise<G
       albums: g.albums.map((a) => ({
         url: a.url,
         artist: decodeEntities(a.artist.trim()),
+        artistUrl: a.artistUrl,
+        artistImage: null,
         title: decodeEntities(a.title.trim()),
-        cover: a.cover,
+        cover: cleanImageUrl(a.cover),
         mediaType: a.mediaType,
         releaseDate: a.releaseDate.trim(),
         criticScore: parseScore(a.criticScore),
@@ -205,7 +215,7 @@ export async function scrapeGenresIndex(opts: FetchOpts = FETCH_OPTS): Promise<G
 export async function scrapeGenrePage(pageUrl: string, slug: string, opts: FetchOpts = FETCH_OPTS, page = 1): Promise<GenreDetail> {
   const res = await fetch(pageUrl, opts);
   if (!res.ok) throw new Error(`Genre fetch failed: ${res.status}`);
-  type RawBlock = { url: string; artist: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean };
+  type RawBlock = { url: string; artist: string; artistUrl: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean };
   const s = {
     name: "",
     sections: [] as Array<{ title: string; url: string | null; albums: RawBlock[]; artists: Array<{ url: string; name: string; image: string | null }> }>,
@@ -243,7 +253,7 @@ export async function scrapeGenrePage(pageUrl: string, slug: string, opts: Fetch
           s.section = { title: "", url: null, albums: [], artists: [] };
           s.sections.push(s.section);
         }
-        s.cur = { url: "", artist: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false };
+        s.cur = { url: "", artist: "", artistUrl: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false };
         s.section.albums.push(s.cur);
         s.lastRatingType = null;
         s.ratingValue = "";
@@ -259,7 +269,7 @@ export async function scrapeGenrePage(pageUrl: string, slug: string, opts: Fetch
     })
     .on(".albumBlock .image img", {
       element(el) {
-        if (s.cur) s.cur.cover = el.getAttribute("src") || el.getAttribute("data-src") || "";
+        if (s.cur) s.cur.cover = cleanImageUrl(el.getAttribute("src") || el.getAttribute("data-src") || "");
       },
     })
     .on(".albumBlock .image .mustHear", {
@@ -270,6 +280,14 @@ export async function scrapeGenrePage(pageUrl: string, slug: string, opts: Fetch
     .on(".albumBlock .artistTitle", {
       text(t) {
         if (s.cur) s.cur.artist = (s.cur.artist ?? "") + t.text;
+      },
+    })
+    .on(".albumBlock a", {
+      element(el) {
+        const href = el.getAttribute("href") ?? "";
+        if (s.cur && !s.cur.artistUrl && href.includes("/artist/")) {
+          s.cur.artistUrl = href.startsWith("http") ? href : BASE + href;
+        }
       },
     })
     .on(".albumBlock .albumTitle", {
@@ -328,7 +346,7 @@ export async function scrapeGenrePage(pageUrl: string, slug: string, opts: Fetch
     })
     .on(".artistBlock img", {
       element(el) {
-        if (s.artist) s.artist.image = el.getAttribute("src") ?? null;
+        if (s.artist) s.artist.image = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".artistBlock .name", {
@@ -346,8 +364,10 @@ export async function scrapeGenrePage(pageUrl: string, slug: string, opts: Fetch
       albums: sec.albums.map((a) => ({
         url: a.url,
         artist: decodeEntities(a.artist.trim()),
+        artistUrl: a.artistUrl,
+        artistImage: null,
         title: decodeEntities(a.title.trim()),
-        cover: a.cover,
+        cover: cleanImageUrl(a.cover),
         mediaType: a.mediaType,
         releaseDate: a.releaseDate.trim(),
         criticScore: parseScore(a.criticScore),
@@ -356,7 +376,7 @@ export async function scrapeGenrePage(pageUrl: string, slug: string, opts: Fetch
         userCount: parseCount(a.userCount),
         mustHear: a.mustHear,
       })),
-      artists: sec.artists.map((a) => ({ url: a.url ?? "", name: decodeEntities((a.name ?? "").trim()), image: a.image ?? null })),
+      artists: sec.artists.map((a) => ({ url: a.url ?? "", name: decodeEntities((a.name ?? "").trim()), image: cleanImageUrl(a.image ?? null) })),
     }))
     .filter((sec) => sec.albums.length > 0 || sec.artists.length > 0);
 
@@ -420,9 +440,10 @@ function scrapePublicationReviewsFromHtml(html: string): PublicationReview[] {
     reviews.push({
       artist: decodeEntities((artistM?.[1] ?? "").trim()),
       artistUrl: "",
+      artistImage: null,
       album: decodeEntities((albumM[2] ?? "").trim()),
       albumUrl: BASE + albumM[1],
-      cover: imgM?.[1] ?? null,
+      cover: cleanImageUrl(imgM?.[1] ?? null),
       score: parseScore((scoreM?.[1] ?? "").trim()),
       reviewUrl: extM?.[1] ?? "",
     });
@@ -458,7 +479,7 @@ export async function scrapePublicationPage(pageUrl: string, slug: string, opts:
     })
     .on(".publicationHeader img, .logo img", {
       element(el) {
-        if (!s.image) s.image = el.getAttribute("src") ?? null;
+        if (!s.image) s.image = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".publicationHeader a[href*='http'], .logo a[href*='http']", {
@@ -516,7 +537,7 @@ export async function scrapePublicationPage(pageUrl: string, slug: string, opts:
     url: pageUrl,
     slug,
     name: decodeEntities(s.name.trim()),
-    image: s.image,
+    image: cleanImageUrl(s.image),
     website: s.website,
     albumsRated: parseCount(s.albumsRated),
     averageRating: parseScore(s.averageRating),
@@ -561,7 +582,7 @@ export async function scrapePublicationPerfect(slug: string, opts: FetchOpts = F
     })
     .on(".albumBlock .image img", {
       element(el) {
-        if (rev) rev.cover = el.getAttribute("src") ?? null;
+        if (rev) rev.cover = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".albumBlock .artistTitle", {
@@ -608,7 +629,8 @@ export async function scrapePublicationPerfect(slug: string, opts: FetchOpts = F
             albumUrl: r.albumUrl ?? "",
             artist: decodeEntities((r.artist ?? "").trim()),
             artistUrl: r.artistUrl ?? "",
-            cover: r.cover ?? null,
+            artistImage: null,
+            cover: cleanImageUrl(r.cover ?? null),
             score: parseScore((r.score ?? "").trim()),
             reviewUrl: r.reviewUrl ?? "",
           })),
@@ -651,7 +673,7 @@ export async function scrapeArtistsOverview(opts: FetchOpts = FETCH_OPTS): Promi
     })
     .on(".artistBlock img", {
       element(el) {
-        if (cur) cur.image = el.getAttribute("src") ?? null;
+        if (cur) cur.image = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".artistBlock .name", {
@@ -666,7 +688,7 @@ export async function scrapeArtistsOverview(opts: FetchOpts = FETCH_OPTS): Promi
       title: decodeEntities(sec.title.trim()),
       artists: sec.artists
         .filter((a) => (a.name ?? "").trim() || (a.url ?? "").trim())
-        .map((a) => ({ url: a.url ?? "", name: decodeEntities((a.name ?? "").trim()), image: a.image ?? null })),
+        .map((a) => ({ url: a.url ?? "", name: decodeEntities((a.name ?? "").trim()), image: cleanImageUrl(a.image ?? null) })),
     }))
     .filter((sec) => sec.artists.length > 0);
 }
@@ -707,7 +729,7 @@ export async function scrapePublicationListsPage(pageUrl: string, opts: FetchOpt
     .on(".criticListBlockImage", {
       element(el) {
         if (st.cur) {
-          st.cur.cover = el.getAttribute("src") ?? null;
+          st.cur.cover = cleanImageUrl(el.getAttribute("src") ?? null);
           // Image alt usually carries the full list title ("Pitchfork's 50 Best Albums of 2025")
           alts[alts.length - 1] = el.getAttribute("alt") ?? "";
         }
@@ -741,7 +763,7 @@ export async function scrapePublicationListsPage(pageUrl: string, opts: FetchOpt
       url: e.url ?? "",
       title: decodeEntities(title),
       publication: decodeEntities(pub),
-      cover: e.cover ?? null,
+      cover: cleanImageUrl(e.cover ?? null),
     };
   });
 }
@@ -782,7 +804,7 @@ export async function scrapeCriticPage(pageUrl: string, slug: string, opts: Fetc
     })
     .on(".userReviewBlock .cover img", {
       element(el) {
-        if (s.rev) s.rev.cover = el.getAttribute("src") ?? null;
+        if (s.rev) s.rev.cover = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".userReviewBlock .artistTitle a", {
@@ -851,7 +873,8 @@ export async function scrapeCriticPage(pageUrl: string, slug: string, opts: Fetc
         albumUrl: r.albumUrl ?? "",
         artist: decodeEntities((r.artist ?? "").trim()),
         artistUrl: r.artistUrl ?? "",
-        cover: r.cover ?? null,
+        artistImage: null,
+        cover: cleanImageUrl(r.cover ?? null),
         score: parseScore((r.score ?? "").trim()),
         text: decodeEntities((r.text ?? "").trim()),
         publication: decodeEntities((r.publication ?? "").trim()),

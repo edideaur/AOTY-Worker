@@ -12,7 +12,7 @@ export const openApiSpec = {
       get: {
         summary: "Get album details",
         description:
-          "Return full album details including scores, tracklist, reviews, streaming links, stats, and credits. Provide either slug (ID or full slug for direct lookup) or both artist and name (search-based lookup). Pass minimal=true to skip the PHP-based stats and credits calls.",
+          "Return full album details including scores, tracklist, reviews, streaming links, artist image, stats, and credits. Provide either slug (ID or full slug for direct lookup) or both artist and name (search-based lookup). Pass minimal=true to skip the PHP-based stats and credits calls and the artist image lookup.",
         operationId: "getAlbum",
         parameters: [
           { $ref: "#/components/parameters/CacheControl" },
@@ -43,7 +43,7 @@ export const openApiSpec = {
             in: "query",
             required: false,
             schema: { type: "boolean", default: false },
-            description: "When true, skips moreStatsAlbum.php and showAlbumCredits.php calls. stats and credits will be null.",
+            description: "When true, skips moreStatsAlbum.php, showAlbumCredits.php and the artist image lookup. stats and credits will be null and artistImage will be null.",
           },
         ],
         responses: {
@@ -593,6 +593,47 @@ export const openApiSpec = {
         },
       },
     },
+    "/search/all": {
+      get: {
+        summary: "Search all content (alias)",
+        description: "Alias of `/search`.",
+        operationId: "searchAll",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          {
+            name: "q",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            example: "radiohead",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Search results",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    query: { type: "string" },
+                    albums: { type: "array", items: { $ref: "#/components/schemas/AlbumBlock" } },
+                    artists: { type: "array", items: { $ref: "#/components/schemas/SearchArtist" } },
+                    labels: { type: "array", items: { $ref: "#/components/schemas/SearchLabel" } },
+                    lists: { type: "array", items: { $ref: "#/components/schemas/UserListEntry" } },
+                    news: { type: "array", items: { $ref: "#/components/schemas/NewsSearchItem" } },
+                    tags: { type: "array", items: { $ref: "#/components/schemas/TagItem" } },
+                    users: { type: "array", items: { $ref: "#/components/schemas/SearchArtist" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
     "/search/albums": {
       get: {
         summary: "Search albums",
@@ -859,6 +900,35 @@ export const openApiSpec = {
         },
       },
     },
+    "/label/autocomplete": {
+      get: {
+        summary: "Autocomplete suggestions for record labels (alias)",
+        description: "Alias of `/labels/autocomplete`.",
+        operationId: "getLabelAutocompleteAlias",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "q", in: "query", required: true, schema: { type: "string" }, description: "Label query prefix" },
+        ],
+        responses: {
+          "200": {
+            description: "Label autocomplete suggestions",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    query: { type: "string" },
+                    suggestions: { type: "array", items: { $ref: "#/components/schemas/LabelAutocompleteItem" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
     "/artist": {
       get: {
         summary: "Get artist details and discography",
@@ -998,6 +1068,37 @@ export const openApiSpec = {
         },
       },
     },
+    "/artist/top-songs": {
+      get: {
+        summary: "Get community's top songs by an artist (alias)",
+        description: "Alias of `/artist/songs`.",
+        operationId: "getArtistTopSongs",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "slug", in: "query", required: true, schema: { type: "string" }, example: "183-kanye-west" },
+          { name: "page", in: "query", schema: { type: "integer", default: 1, minimum: 1 } },
+        ],
+        responses: {
+          "200": {
+            description: "Top songs",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    slug: { type: "string" },
+                    page: { type: "integer" },
+                    songs: { type: "array", items: { $ref: "#/components/schemas/TopSong" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
     "/label": {
       get: {
         summary: "Get label details and releases",
@@ -1021,6 +1122,35 @@ export const openApiSpec = {
       get: {
         summary: "Autocomplete suggestions for musical genres",
         operationId: "getGenreAutocomplete",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "q", in: "query", required: true, schema: { type: "string" }, description: "Genre query prefix", example: "rock" },
+        ],
+        responses: {
+          "200": {
+            description: "Genre autocomplete suggestions",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    query: { type: "string" },
+                    suggestions: { type: "array", items: { $ref: "#/components/schemas/GenreAutocompleteItem" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/genre/autocomplete": {
+      get: {
+        summary: "Autocomplete suggestions for musical genres (alias)",
+        description: "Alias of `/genres/autocomplete`.",
+        operationId: "getGenreAutocompleteAlias",
         parameters: [
           { $ref: "#/components/parameters/CacheControl" },
           { name: "q", in: "query", required: true, schema: { type: "string" }, description: "Genre query prefix", example: "rock" },
@@ -1252,6 +1382,26 @@ export const openApiSpec = {
       get: {
         summary: "Get critic details and reviews",
         operationId: "getCritic",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "slug", in: "query", required: true, schema: { type: "string" }, example: "2-anthony-fantano" },
+          { name: "page", in: "query", schema: { type: "integer", default: 1, minimum: 1 } },
+        ],
+        responses: {
+          "200": {
+            description: "Critic details",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/CriticDetail" } } },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/critic/reviews": {
+      get: {
+        summary: "Get critic details and reviews (alias)",
+        description: "Alias of `/critic`.",
+        operationId: "getCriticAlias",
         parameters: [
           { $ref: "#/components/parameters/CacheControl" },
           { name: "slug", in: "query", required: true, schema: { type: "string" }, example: "2-anthony-fantano" },
@@ -2806,6 +2956,31 @@ export const openApiSpec = {
         },
       },
     },
+    "/comments/all": {
+      get: {
+        summary: "All comments for any item via AJAX (alias)",
+        description: "Alias of `/comments`: full comment thread for a user review, news article, user list, year-end list, or album without truncation.",
+        operationId: "getAllCommentsAlias",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "type", in: "query", required: true, schema: { type: "string", enum: ["user_review", "news", "user_list", "yearEndList", "album"] }, example: "user_review" },
+          { name: "itemId", in: "query", required: true, schema: { type: "string" }, example: "10497555" },
+          { name: "albumId", in: "query", schema: { type: "string" }, example: "1931016" },
+        ],
+        responses: {
+          "200": {
+            description: "Full comment thread",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AllCommentsResult" },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
     "/album/critic-lists": {
       get: {
         summary: "Year-end critic lists ranking an album",
@@ -3105,6 +3280,8 @@ export const openApiSpec = {
                   properties: {
                     slug: { type: ["string", "null"] },
                     artist: { type: "string" },
+                    artistUrl: { type: "string" },
+                    artistImage: { type: ["string", "null"] },
                     title: { type: "string" },
                     url: { type: "string" },
                     tracklist: { type: "array", items: { $ref: "#/components/schemas/Track" } },
@@ -3139,6 +3316,44 @@ export const openApiSpec = {
                   properties: {
                     slug: { type: ["string", "null"] },
                     artist: { type: "string" },
+                    artistUrl: { type: "string" },
+                    artistImage: { type: ["string", "null"] },
+                    title: { type: "string" },
+                    url: { type: "string" },
+                    streamingLinks: { type: "array", items: { $ref: "#/components/schemas/StreamingLink" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/album/streaming-links": {
+      get: {
+        summary: "Album streaming links (alias)",
+        description: "Alias of `/album/streaming`.",
+        operationId: "getAlbumStreamingAlias",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "slug", in: "query", schema: { type: "string" }, description: "Album ID or slug", example: "2915-outkast-aquemini" },
+          { name: "artist", in: "query", schema: { type: "string" }, example: "OutKast" },
+          { name: "name", in: "query", schema: { type: "string" }, example: "Aquemini" },
+        ],
+        responses: {
+          "200": {
+            description: "Album streaming links",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    slug: { type: ["string", "null"] },
+                    artist: { type: "string" },
+                    artistUrl: { type: "string" },
+                    artistImage: { type: ["string", "null"] },
                     title: { type: "string" },
                     url: { type: "string" },
                     streamingLinks: { type: "array", items: { $ref: "#/components/schemas/StreamingLink" } },
@@ -3190,6 +3405,39 @@ export const openApiSpec = {
         summary: "Users who added an album to library",
         description: "List users who have this album in their library",
         operationId: "getAlbumInLibrary",
+        parameters: [
+          { $ref: "#/components/parameters/CacheControl" },
+          { name: "albumId", in: "query", schema: { type: "string" }, description: "Numeric album ID", example: "564912" },
+          { name: "slug", in: "query", schema: { type: "string" }, description: "Album slug starting with ID", example: "564912-asap-rocky-dont-be-dumb" },
+          { name: "start", in: "query", schema: { type: "integer", default: 0 }, description: "Offset for pagination" },
+        ],
+        responses: {
+          "200": {
+            description: "Users with album in library",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    albumId: { type: "string" },
+                    type: { type: "string" },
+                    start: { type: "integer" },
+                    users: { type: "array", items: { $ref: "#/components/schemas/AlbumUserItem" } },
+                  },
+                },
+              },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "500": { $ref: "#/components/responses/ServerError" },
+        },
+      },
+    },
+    "/album/library": {
+      get: {
+        summary: "Users who added an album to library (alias)",
+        description: "Alias of `/album/in-library`.",
+        operationId: "getAlbumInLibraryAlias",
         parameters: [
           { $ref: "#/components/parameters/CacheControl" },
           { name: "albumId", in: "query", schema: { type: "string" }, description: "Numeric album ID", example: "564912" },
@@ -3800,6 +4048,8 @@ export const openApiSpec = {
         properties: {
           url: { type: "string" },
           artist: { type: "string" },
+          artistUrl: { type: "string", description: "Empty when AOTY renders the artist name as plain text." },
+          artistImage: { type: ["string", "null"], description: "Always null: album blocks carry no artist thumbnails." },
           title: { type: "string" },
           cover: { type: "string" },
           mediaType: { type: "string", description: "lp, ep, single, mixtape, compilation, etc." },
@@ -3828,6 +4078,7 @@ export const openApiSpec = {
           title: { type: "string" },
           artist: { type: "string" },
           artistUrl: { type: "string" },
+          artistImage: { type: ["string", "null"] },
           cover: { type: "string" },
           datePublished: { type: "string" },
           dateCreated: { type: ["string", "null"] },
@@ -3840,8 +4091,8 @@ export const openApiSpec = {
           secondaryGenres: { type: "array", items: { type: "string" } },
           tags: { type: "array", items: { type: "string" } },
           vibes: { type: "array", items: { type: "string" } },
-          producers: { type: "array", items: { $ref: "#/components/schemas/NamedLink" } },
-          writers: { type: "array", items: { $ref: "#/components/schemas/NamedLink" } },
+          producers: { type: "array", items: { $ref: "#/components/schemas/ArtistLink" } },
+          writers: { type: "array", items: { $ref: "#/components/schemas/ArtistLink" } },
           totalLength: { type: ["string", "null"] },
           criticScore: { type: ["string", "null"] },
           criticScoreExact: { type: ["string", "null"] },
@@ -3913,6 +4164,7 @@ export const openApiSpec = {
           ratingCount: { type: ["integer", "null"] },
           notes: { type: ["string", "null"] },
           features: { type: "array", items: { type: "string" } },
+          featureLinks: { type: "array", items: { $ref: "#/components/schemas/ArtistLink" } },
         },
       },
       CriticReview: {
@@ -3998,6 +4250,15 @@ export const openApiSpec = {
           url: { type: "string" },
         },
       },
+      ArtistLink: {
+        type: "object",
+        description: "Artist reference with optional image (null where AOTY renders text-only links).",
+        properties: {
+          name: { type: "string" },
+          url: { type: "string" },
+          image: { type: ["string", "null"] },
+        },
+      },
       DiscographySection: {
         type: "object",
         properties: {
@@ -4018,11 +4279,11 @@ export const openApiSpec = {
           followers: { type: ["string", "null"] },
           genres: { type: "array", items: { $ref: "#/components/schemas/NamedLink" } },
           alsoKnownAs: { type: "array", items: { type: "string" } },
-          members: { type: "array", items: { $ref: "#/components/schemas/NamedLink" } },
-          formerMembers: { type: "array", items: { $ref: "#/components/schemas/NamedLink" } },
-          memberOf: { type: "array", items: { $ref: "#/components/schemas/NamedLink" } },
-          formerlyOf: { type: "array", items: { $ref: "#/components/schemas/NamedLink" } },
-          relatedArtists: { type: "array", items: { $ref: "#/components/schemas/NamedLink" } },
+          members: { type: "array", items: { $ref: "#/components/schemas/ArtistLink" } },
+          formerMembers: { type: "array", items: { $ref: "#/components/schemas/ArtistLink" } },
+          memberOf: { type: "array", items: { $ref: "#/components/schemas/ArtistLink" } },
+          formerlyOf: { type: "array", items: { $ref: "#/components/schemas/ArtistLink" } },
+          relatedArtists: { type: "array", items: { $ref: "#/components/schemas/ArtistLink" } },
           tags: { type: "array", items: { $ref: "#/components/schemas/NamedLink" } },
           website: { type: ["string", "null"] },
           sections: { type: "array", items: { $ref: "#/components/schemas/DiscographySection" } },
@@ -4090,6 +4351,7 @@ export const openApiSpec = {
           albumUrl: { type: "string" },
           artist: { type: "string" },
           artistUrl: { type: "string" },
+          artistImage: { type: ["string", "null"] },
           cover: { type: ["string", "null"] },
           score: { type: "string" },
           reviewUrl: { type: "string" },
@@ -4126,6 +4388,7 @@ export const openApiSpec = {
           albumUrl: { type: "string" },
           artist: { type: "string" },
           artistUrl: { type: "string" },
+          artistImage: { type: ["string", "null"] },
           cover: { type: ["string", "null"] },
           score: { type: "string" },
           text: { type: "string" },
@@ -4150,7 +4413,7 @@ export const openApiSpec = {
         type: "object",
         properties: {
           role: { type: "string" },
-          artists: { type: "array", items: { $ref: "#/components/schemas/NamedLink" } },
+          artists: { type: "array", items: { $ref: "#/components/schemas/ArtistLink" } },
         },
       },
       SongRating: {
@@ -4171,6 +4434,7 @@ export const openApiSpec = {
           title: { type: "string" },
           artist: { type: "string" },
           artistUrl: { type: "string" },
+          artistImage: { type: ["string", "null"] },
           cover: { type: ["string", "null"] },
           album: { type: ["string", "null"] },
           albumUrl: { type: ["string", "null"] },
@@ -4219,6 +4483,7 @@ export const openApiSpec = {
           url: { type: "string" },
           artist: { type: "string" },
           artistUrl: { type: "string" },
+          artistImage: { type: ["string", "null"] },
           album: { type: ["string", "null"] },
           albumUrl: { type: ["string", "null"] },
           cover: { type: ["string", "null"] },
@@ -4295,6 +4560,7 @@ export const openApiSpec = {
           url: { type: "string" },
           artist: { type: "string" },
           artistUrl: { type: "string" },
+          artistImage: { type: ["string", "null"] },
           album: { type: "string" },
           albumUrl: { type: "string" },
           cover: { type: ["string", "null"] },
@@ -4392,6 +4658,7 @@ export const openApiSpec = {
           rank: { type: "string" },
           artist: { type: "string" },
           artistUrl: { type: "string" },
+          artistImage: { type: ["string", "null"] },
           title: { type: "string" },
           url: { type: "string" },
           cover: { type: ["string", "null"] },
@@ -4603,6 +4870,7 @@ export const openApiSpec = {
           rank: { type: "integer" },
           artist: { type: "string" },
           artistUrl: { type: "string" },
+          artistImage: { type: ["string", "null"] },
           album: { type: "string" },
           albumUrl: { type: "string" },
           cover: { type: ["string", "null"] },
@@ -4617,7 +4885,8 @@ export const openApiSpec = {
           rank: { type: "integer" },
           artist: { type: "string" },
           artistUrl: { type: "string" },
-          artists: { type: "array", items: { $ref: "#/components/schemas/NamedLink" } },
+          artistImage: { type: ["string", "null"] },
+          artists: { type: "array", items: { $ref: "#/components/schemas/ArtistLink" } },
           title: { type: "string" },
           url: { type: "string" },
           cover: { type: ["string", "null"] },
@@ -4631,6 +4900,7 @@ export const openApiSpec = {
           rank: { type: "integer" },
           artist: { type: "string" },
           artistUrl: { type: "string" },
+          artistImage: { type: ["string", "null"] },
           album: { type: "string" },
           albumUrl: { type: "string" },
           cover: { type: ["string", "null"] },
@@ -4701,6 +4971,82 @@ export const openApiSpec = {
           username: { type: "string" },
           artistId: { type: "string" },
           ratings: { type: "array", items: { $ref: "#/components/schemas/UserArtistRatingItem" } },
+        },
+      },
+      AlbumDistributionRow: {
+        type: "object",
+        properties: {
+          label: { type: "string" },
+          count: { type: "integer" },
+          percentage: { type: ["number", "null"] },
+        },
+      },
+      UserTrackRatingEntry: {
+        type: "object",
+        properties: {
+          number: { type: "integer" },
+          title: { type: "string" },
+          url: { type: "string" },
+          length: { type: "string" },
+          score: { type: ["number", "null"] },
+          features: { type: "array", items: { type: "string" } },
+          featureLinks: { type: "array", items: { $ref: "#/components/schemas/ArtistLink" } },
+        },
+      },
+      UserAlbumTrackRatingsResult: {
+        type: "object",
+        properties: {
+          username: { type: "string" },
+          albumId: { type: "integer" },
+          album: { type: "string" },
+          artist: { type: "string" },
+          cover: { type: ["string", "null"] },
+          tracks: { type: "array", items: { $ref: "#/components/schemas/UserTrackRatingEntry" } },
+        },
+      },
+      CorrectionChangeLogEntry: {
+        type: "object",
+        properties: {
+          user: { type: "string" },
+          userUrl: { type: "string" },
+          role: { type: ["string", "null"] },
+          action: { type: "string" },
+          date: { type: ["string", "null"] },
+        },
+      },
+      CorrectionItem: {
+        type: "object",
+        properties: {
+          id: { type: "integer" },
+          title: { type: "string" },
+          status: { type: "string" },
+          submittedBy: { type: ["string", "null"] },
+          submittedByUrl: { type: ["string", "null"] },
+          date: { type: ["string", "null"] },
+        },
+      },
+      EntityCorrectionsResult: {
+        type: "object",
+        properties: {
+          id: { type: "integer" },
+          title: { type: "string" },
+          url: { type: "string" },
+          addedOn: { type: ["string", "null"] },
+          addedBy: { type: ["string", "null"] },
+          addedByUrl: { type: ["string", "null"] },
+          sourceUrl: { type: ["string", "null"] },
+          locked: { type: "boolean" },
+          changeLog: { type: "array", items: { $ref: "#/components/schemas/CorrectionChangeLogEntry" } },
+          corrections: { type: "array", items: { $ref: "#/components/schemas/CorrectionItem" } },
+        },
+      },
+      AllCommentsResult: {
+        type: "object",
+        properties: {
+          type: { type: "string" },
+          itemId: { type: "integer" },
+          albumId: { type: ["integer", "null"] },
+          comments: { type: "array", items: { $ref: "#/components/schemas/AotyComment" } },
         },
       },
       GenreNameResult: {

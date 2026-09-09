@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import {
+  fetchArtistImage,
   scrapeSimilarArtists,
   scrapeArtistTopSongs,
   scrapeArtistNews,
@@ -10,7 +11,7 @@ describe("artist scrapers unit tests", () => {
   it("parses similar artists", async () => {
     const html = `
       <div class="artistBlock">
-        <a href="/artist/1-radiohead/"><img src="https://cdn.aoty.org/rh.jpg" /><div class="name">Radiohead</div></a>
+        <a href="/artist/1-radiohead/"><img src="https://cdn.albumoftheyear.org/artists/sq/radiohead_123.jpg" /><div class="name">Radiohead</div></a>
       </div>
     `;
 
@@ -21,6 +22,8 @@ describe("artist scrapers unit tests", () => {
       const artists = await scrapeSimilarArtists("1-radiohead", undefined, 2);
       expect(artists.length).toBe(1);
       expect(artists[0].name).toBe("Radiohead");
+      // /sq/ thumbnails are normalized to full-size images
+      expect(artists[0].image).toBe("https://cdn.albumoftheyear.org/artists/radiohead_123.jpg");
 
       const artistsP1 = await scrapeSimilarArtists("1-radiohead");
       expect(artistsP1.length).toBe(1);
@@ -164,13 +167,13 @@ describe("artist scrapers unit tests", () => {
       expect(artist.image).toBe("https://cdn.aoty.org/rh.jpg");
       expect(artist.sections.length).toBe(1);
       expect(artist.members).toEqual([
-        { name: "Thom Yorke", url: "https://www.albumoftheyear.org/artist/10-thom-yorke/" },
-        { name: "Jonny Greenwood", url: "https://www.albumoftheyear.org/artist/11-jonny-greenwood/" },
+        { name: "Thom Yorke", url: "https://www.albumoftheyear.org/artist/10-thom-yorke/", image: null },
+        { name: "Jonny Greenwood", url: "https://www.albumoftheyear.org/artist/11-jonny-greenwood/", image: null },
       ]);
       expect(artist.formerMembers).toEqual([
-        { name: "Clive Deamer", url: "https://www.albumoftheyear.org/artist/12-clive-deamer/" },
+        { name: "Clive Deamer", url: "https://www.albumoftheyear.org/artist/12-clive-deamer/", image: null },
       ]);
-      expect(artist.relatedArtists).toEqual([{ name: "Atoms for Peace", url: "https://www.albumoftheyear.org/artist/5-atoms-for-peace/" }]);
+      expect(artist.relatedArtists).toEqual([{ name: "Atoms for Peace", url: "https://www.albumoftheyear.org/artist/5-atoms-for-peace/", image: null }]);
       expect(artist.tags).toEqual([{ name: "indie rock", url: "https://www.albumoftheyear.org/tag/indie+rock/artists/" }]);
       expect(artist.topSongs.length).toBe(1);
       expect(artist.topSongs[0].title).toBe("Paranoid Android");
@@ -253,6 +256,149 @@ describe("artist scrapers unit tests", () => {
       const random = await scrapeRandomArtist();
       expect(random.name).toBe("Random Band");
       expect(random.sections.length).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("strips /sq/ from the artist page main image", async () => {
+    const html = `
+      <h1 class="artistHeadline">Kanye West</h1>
+      <div class="artistImage"><img src="https://cdn.albumoftheyear.org/artists/sq/kanye-west_1586101900.jpg" /></div>
+      <h2 class="subHeadline">LP</h2>
+      <div class="albumBlock"><div class="albumTitle">Album 1</div></div>
+    `;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(html, { status: 200 });
+
+    try {
+      const artist = await scrapeArtistPage("http://mock/artist/183-kanye-west/");
+      expect(artist.image).toBe("https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("fetchArtistImage prefers og:image and strips /sq/ fallback", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () =>
+        new Response(
+          `<head>
+            <meta property="og:image" content="https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg" />
+            <meta property="og:url" content="https://www.albumoftheyear.org/artist/183-kanye-west/" />
+          </head>
+          <h1 class="artistHeadline">Kanye West</h1>
+          <div class="artistImage"><img src="https://cdn.albumoftheyear.org/artists/sq/kanye-west_1586101900.jpg" /></div>`,
+          { status: 200 },
+        );
+      expect(await fetchArtistImage("https://www.albumoftheyear.org/artist/183-kanye-west/")).toBe(
+        "https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg",
+      );
+
+      globalThis.fetch = async () =>
+        new Response(
+          `<link href="https://www.albumoftheyear.org/artist/1-radiohead/" rel="canonical" />
+          <h1 class="artistHeadline">Radiohead</h1>
+          <div class="artistImage"><img src="https://cdn.albumoftheyear.org/artists/sq/radiohead_1.jpg" /></div>`,
+          { status: 200 },
+        );
+      expect(await fetchArtistImage("https://www.albumoftheyear.org/artist/1-radiohead/")).toBe(
+        "https://cdn.albumoftheyear.org/artists/radiohead_1.jpg",
+      );
+
+      // non-artist pages (e.g. album HTML served for every URL in naive mocks) yield null
+      globalThis.fetch = async () =>
+        new Response(
+          `<meta property="og:url" content="https://www.albumoftheyear.org/album/1998-x/" />
+          <div class="albumTitle">Some Album</div>`,
+          { status: 200 },
+        );
+      expect(await fetchArtistImage("https://www.albumoftheyear.org/artist/1-radiohead/")).toBeNull();
+
+      // href-first canonical (as AOTY emits it) is recognized even without og:url
+      globalThis.fetch = async () =>
+        new Response(
+          `<link href="https://www.albumoftheyear.org/artist/1-radiohead/" rel="canonical" />
+          <h1 class="artistHeadline">Radiohead</h1>
+          <div class="artistImage"><img src="https://cdn.albumoftheyear.org/artists/sq/radiohead_1.jpg" /></div>`,
+          { status: 200 },
+        );
+      expect(await fetchArtistImage("https://www.albumoftheyear.org/artist/1-radiohead/")).toBe(
+        "https://cdn.albumoftheyear.org/artists/radiohead_1.jpg",
+      );
+
+      // missing image yields null
+      globalThis.fetch = async () =>
+        new Response(
+          `<link href="https://www.albumoftheyear.org/artist/999-no-photo/" rel="canonical" />
+          <h1 class="artistHeadline">No Photo Band</h1>`,
+          { status: 200 },
+        );
+      expect(await fetchArtistImage("https://www.albumoftheyear.org/artist/999-no-photo/")).toBeNull();
+
+      // fetch failures and non-artist URLs yield null
+      globalThis.fetch = async () => new Response("err", { status: 500 });
+      expect(await fetchArtistImage("https://www.albumoftheyear.org/artist/1-radiohead/")).toBeNull();
+      expect(await fetchArtistImage("")).toBeNull();
+      expect(await fetchArtistImage("https://www.albumoftheyear.org/album/1-x/")).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("applyArtistImages fills matched links without fetching", async () => {
+    const { applyArtistImages } = await import("../src/scrapers/artist.js");
+    const links = [
+      { name: "A", url: "https://www.albumoftheyear.org/artist/1-a/", image: null },
+      { name: "B", url: "https://www.albumoftheyear.org/artist/2-b", image: null },
+      { name: "C", url: "https://www.albumoftheyear.org/artist/3-c/", image: "https://cdn.aoty.org/keep.jpg" },
+      { name: "D", url: "https://www.albumoftheyear.org/artist/4-d/", image: null },
+    ];
+    applyArtistImages(links, [
+      { url: "https://www.albumoftheyear.org/artist/1-a", image: "https://cdn.aoty.org/a.jpg" },
+      { url: "https://www.albumoftheyear.org/artist/2-b/", image: null },
+      { url: "https://www.albumoftheyear.org/artist/3-c/", image: "https://cdn.aoty.org/replace.jpg" },
+    ]);
+    // trailing-slash-insensitive match
+    expect(links[0]?.image).toBe("https://cdn.aoty.org/a.jpg");
+    // imageless sources are ignored
+    expect(links[1]?.image).toBeNull();
+    // existing images are kept
+    expect(links[2]?.image).toBe("https://cdn.aoty.org/keep.jpg");
+    // unmatched links stay null
+    expect(links[3]?.image).toBeNull();
+  });
+
+  it("reuses similar-artist images for member lists on the same page", async () => {
+    const html = `
+      <h1 class="artistHeadline">Thom Yorke</h1>
+      <div class="artistImage"><img src="https://cdn.albumoftheyear.org/artists/sq/thom-yorke_1.jpg" /></div>
+      <div class="artistTopBox info">
+        <div class="detailRow"><a href="/artist/1-radiohead/">Radiohead</a> <span>/&nbsp;Member Of</span></div>
+        <div class="detailRow"><a href="/artist/999-unknown/">Unknown Band</a> <span>/&nbsp;Member Of</span></div>
+      </div>
+      <div class="section relatedArtists">
+        <div class="artistBlock"><a href="/artist/1-radiohead/"><img src="https://cdn.albumoftheyear.org/artists/sq/radiohead_1.jpg" /><div class="name">Radiohead</div></a></div>
+      </div>
+      <h2 class="subHeadline">LP</h2>
+      <div class="albumBlock"><div class="albumTitle">Album 1</div></div>
+    `;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(html, { status: 200 });
+
+    try {
+      const artist = await scrapeArtistPage("http://mock/artist/10-thom-yorke/");
+      expect(artist.memberOf.length).toBe(2);
+      // matched by artist URL against the similar-artists section, /sq/ stripped
+      expect(artist.memberOf[0]).toEqual({
+        name: "Radiohead",
+        url: "https://www.albumoftheyear.org/artist/1-radiohead/",
+        image: "https://cdn.albumoftheyear.org/artists/radiohead_1.jpg",
+      });
+      expect(artist.memberOf[1]?.image).toBeNull();
     } finally {
       globalThis.fetch = originalFetch;
     }

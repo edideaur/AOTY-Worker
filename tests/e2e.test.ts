@@ -103,6 +103,9 @@ describe("End-to-End API Smoke Tests for all 84+ endpoints", () => {
       if (urlStr.includes("labelAutocomplete.php")) {
         return new Response(JSON.stringify([{ value: "Def Jam", link: "/label/1-def-jam/" }]), { status: 200 });
       }
+      if (urlStr.includes("albumGenreAutocomplete.php")) {
+        return new Response(JSON.stringify([{ id: "7", value: "Rock", link: "/genre/7-rock/" }]), { status: 200 });
+      }
       if (urlStr.includes("autocomplete.php")) {
         return new Response(JSON.stringify([{ value: "Radiohead", link: "/artist/1-radiohead/" }]), { status: 200 });
       }
@@ -276,6 +279,12 @@ describe("End-to-End API Smoke Tests for all 84+ endpoints", () => {
     { path: "/releases/week?week=36", expectedProp: "albums" },
     { path: "/user/perfect?username=zed", expectedProp: "ratings" },
     { path: "/critic/reviews?slug=1-rob", expectedProp: "name" },
+    { path: "/comments/all?type=user_review&itemId=1", expectedProp: "comments" },
+    { path: "/artist/top-songs?slug=1-radiohead", expectedProp: "songs" },
+    { path: "/search/all?q=radiohead", expectedProp: "albums" },
+    { path: "/genre/autocomplete?q=rock", expectedProp: "suggestions" },
+    { path: "/album/library?albumId=1", expectedProp: "users" },
+    { path: "/album/streaming-links?slug=1-okc", expectedProp: "streamingLinks" },
     { path: "/ratings/sources?year=2024", expectedProp: "sources" },
     { path: "/ratings/genres?year=2024", expectedProp: "genres" },
   ];

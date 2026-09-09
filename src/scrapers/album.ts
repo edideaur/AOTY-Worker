@@ -5,6 +5,7 @@ import type {
   AlbumRankingInfo,
   AlbumUserListPreview,
   AotyComment,
+  ArtistLink,
   CriticListRank,
   CriticReview,
   NamedLink,
@@ -14,6 +15,7 @@ import type {
   UserReview,
 } from "../types.js";
 import { scrapeAlbumBlocks } from "./albumBlock.js";
+import { fetchArtistImage } from "./artist.js";
 
 export async function findAlbumUrl(artist: string, name: string, opts: FetchOpts = FETCH_OPTS): Promise<string | null> {
   const q = encodeURIComponent(`${artist} - ${name}`);
@@ -36,7 +38,7 @@ export async function findAlbumUrl(artist: string, name: string, opts: FetchOpts
   return found.url;
 }
 
-export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_OPTS): Promise<AlbumDetail> {
+export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_OPTS, includeArtistImage = true): Promise<AlbumDetail> {
   const res = await fetch(pageUrl, opts);
   if (!res.ok) throw new Error(`Album fetch failed: ${res.status}`);
   const htmlPromise = res.clone().text();
@@ -57,10 +59,11 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
     vibes: [] as string[],
     totalLength: null as string | null,
     streamingLinks: [] as StreamingLink[],
-    tracks: [] as Array<{ number: string; title: string; url: string; length: string; rating: string | null; ratingCount: number | null; notes: string | null; features: string[] }>,
-    track: null as { number: string; title: string; url: string; length: string; rating: string | null; ratingCount: number | null; notes: string | null; features: string[] } | null,
+    tracks: [] as Array<{ number: string; title: string; url: string; length: string; rating: string | null; ratingCount: number | null; notes: string | null; features: string[]; featureLinks: ArtistLink[] }>,
+    track: null as { number: string; title: string; url: string; length: string; rating: string | null; ratingCount: number | null; notes: string | null; features: string[]; featureLinks: ArtistLink[] } | null,
     trackTitleBuf: "",
     inTrackTitle: false,
+    featureLink: null as ArtistLink | null,
     reviews: [] as Array<Record<string, string>>,
     review: null as Record<string, string> | null,
     reviewTextBuf: "",
@@ -129,10 +132,11 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
         if (s.track && !s.track.title && s.trackTitleBuf) {
           s.track.title = s.trackTitleBuf.trim();
         }
-        s.track = { number: "", title: "", url: "", length: "", rating: null, ratingCount: null, notes: null, features: [] };
+        s.track = { number: "", title: "", url: "", length: "", rating: null, ratingCount: null, notes: null, features: [], featureLinks: [] };
         s.tracks.push(s.track);
         s.trackTitleBuf = "";
         s.inTrackTitle = false;
+        s.featureLink = null;
       },
     })
     .on(".trackNumber", {
@@ -160,9 +164,24 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
       text(t) { if (s.track) s.track.notes = (s.track.notes ?? "") + t.text; },
     })
     .on(".trackTitle .featuredArtists a", {
+      element(el) {
+        // Featured-artist links are artist links; keep name-only behavior for anything else.
+        const href = el.getAttribute("href") ?? "";
+        if (s.track && href.includes("/artist/")) {
+          s.featureLink = {
+            name: "",
+            url: href.startsWith("http") ? href : BASE + href,
+            image: null,
+          };
+          s.track.featureLinks.push(s.featureLink);
+        } else {
+          s.featureLink = null;
+        }
+      },
       text(t) {
         const name = t.text.trim();
         if (s.track && name) s.track.features?.push(name);
+        if (s.featureLink) s.featureLink.name += t.text;
       },
     })
     .on(".trackRating span", {
@@ -241,6 +260,9 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
         ratingCount: t.ratingCount ?? null,
         notes: t.notes ? decodeEntities(t.notes.trim()) : null,
         features: (t.features ?? []).map(decodeEntities),
+        featureLinks: (t.featureLinks ?? [])
+          .map((f) => ({ name: decodeEntities((f.name ?? "").trim()), url: f.url ?? "", image: null as string | null }))
+          .filter((f) => f.name && f.url),
       };
     });
   const cleanedReviews = cleanCriticReviews(s.reviews);
@@ -273,8 +295,8 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
   const criticRanking = parseRanking("albumCriticScoreBox");
   const userRanking = parseRanking("albumUserScoreBox");
 
-  const producers: NamedLink[] = [];
-  const writers: NamedLink[] = [];
+  const producers: ArtistLink[] = [];
+  const writers: ArtistLink[] = [];
   for (const m of html.matchAll(/<div class="detailRow">([\s\S]*?)<\/div>/g)) {
     const rowContent = m[1];
     if (!rowContent) continue;
@@ -286,6 +308,7 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
           producers.push({
             name: decodeEntities(n.trim()),
             url: u.startsWith("http") ? u : BASE + u,
+            image: null,
           });
         }
       }
@@ -297,6 +320,7 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
           writers.push({
             name: decodeEntities(n.trim()),
             url: u.startsWith("http") ? u : BASE + u,
+            image: null,
           });
         }
       }
@@ -421,12 +445,16 @@ export async function scrapeAlbumPage(pageUrl: string, opts: FetchOpts = FETCH_O
     }
   }
 
+  const artistUrl = byArtist?.["url"] ? (byArtist["url"].startsWith("http") ? byArtist["url"] : `${BASE}${byArtist["url"]}`) : "";
+  const artistImage = includeArtistImage ? await fetchArtistImage(artistUrl, opts) : null;
+
   return {
     url: pageUrl,
     id: parseId(s.albumId),
     title: decodeEntities(String(jsonLd["name"] ?? "")),
     artist: decodeEntities(byArtist?.["name"] ?? ""),
-    artistUrl: byArtist?.["url"] ? (byArtist["url"].startsWith("http") ? byArtist["url"] : `${BASE}${byArtist["url"]}`) : "",
+    artistUrl,
+    artistImage,
     cover: cleanImageUrl(String(jsonLd["image"] ?? "")),
     datePublished: String(jsonLd["datePublished"] ?? ""),
     dateCreated,
@@ -486,6 +514,7 @@ export function parseAlbumUserReviewRows(htmlChunk: string): UserReview[] {
       url: revUrl,
       artist: "",
       artistUrl: "",
+      artistImage: null,
       album: "",
       albumUrl: "",
       cover: null,

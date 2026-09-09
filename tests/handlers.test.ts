@@ -655,28 +655,123 @@ describe("Query parameter routing & response shapes", () => {
       restore();
     }
   });
+  it("handles /album minimal flag for stats, credits and artistImage", async () => {
+    const albumHtml = `
+      <script type="application/ld+json">{"@type":"MusicAlbum","name":"Aquemini","byArtist":{"name":"OutKast","url":"https://www.albumoftheyear.org/artist/1-outkast/"},"image":"https://cdn.albumoftheyear.org/album/2915.jpg","datePublished":"1998-09-29"}</script>
+      <button class="showImage" data-id="2915"></button>
+    `;
+    const artistHtml = `
+      <meta property="og:image" content="https://cdn.albumoftheyear.org/artists/outkast_1.jpg" />
+      <meta property="og:url" content="https://www.albumoftheyear.org/artist/1-outkast/" />
+      <h1 class="artistHeadline">OutKast</h1>
+    `;
+    const restore = mockFetch(async (input) => {
+      const u = String(input);
+      if (u.includes("/artist/")) return new Response(artistHtml, { status: 200 });
+      return new Response(albumHtml, { status: 200 });
+    });
+
+    try {
+      const resFull = await worker.fetch(req("/album?slug=2915-outkast-aquemini"), env);
+      expect(resFull.status).toBe(200);
+      const jsonFull = (await resFull.json()) as { artistImage: string | null };
+      expect(jsonFull.artistImage).toBe("https://cdn.albumoftheyear.org/artists/outkast_1.jpg");
+
+      const resMinimal = await worker.fetch(req("/album?slug=2915-outkast-aquemini&minimal=true"), env);
+      expect(resMinimal.status).toBe(200);
+      const jsonMinimal = (await resMinimal.json()) as { artistImage: string | null; stats: unknown; credits: unknown };
+      expect(jsonMinimal.artistImage).toBeNull();
+      expect(jsonMinimal.stats).toBeNull();
+      expect(jsonMinimal.credits).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it("fills producer images on /album from credit photos by artist URL", async () => {
+    const albumHtml = `
+      <script type="application/ld+json">{"@type":"MusicAlbum","name":"My Beautiful Dark Twisted Fantasy","byArtist":{"name":"Kanye West","url":"https://www.albumoftheyear.org/artist/183-kanye-west/"},"image":"https://cdn.albumoftheyear.org/album/1998.jpg","datePublished":"2010-11-22"}</script>
+      <button class="showImage" data-id="1998"></button>
+      <div class="albumTopBox info">
+        <div class="detailRow"><a href="/artist/183-kanye-west/">Kanye West</a> / Producer</div>
+      </div>
+    `;
+    const artistHtml = `
+      <meta property="og:image" content="https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg" />
+      <meta property="og:url" content="https://www.albumoftheyear.org/artist/183-kanye-west/" />
+      <h1 class="artistHeadline">Kanye West</h1>
+    `;
+    const creditsHtml = `
+      <div class="sectionTitle">Producer</div>
+      <div class="credit">
+        <div class="photo"><img src="https://cdn.albumoftheyear.org/artists/sq/kanye-west_1586101900.jpg" /></div>
+        <div class="name"><a href="/artist/183-kanye-west/">Kanye West</a></div>
+        <div class="songs"><a>Production</a></div>
+      </div>
+    `;
+    const restore = mockFetch(async (input, init) => {
+      const u = String(input);
+      if (u.includes("showAlbumCredits.php")) return new Response(creditsHtml, { status: 200 });
+      if (u.includes("moreStatsAlbum.php")) return new Response("1,2,3,4,5", { status: 200 });
+      if (u.includes("/artist/")) return new Response(artistHtml, { status: 200 });
+      return new Response(albumHtml, { status: 200 });
+    });
+
+    try {
+      const env = createMockEnv();
+      const res = await worker.fetch(req("/album?slug=1998-kanye-west-mbdtf"), env);
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as {
+        artistImage: string | null;
+        producers: Array<{ name: string; url: string; image: string | null }>;
+      };
+      expect(json.artistImage).toBe("https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg");
+      expect(json.producers.length).toBe(1);
+      // credit photo matched by artist URL, /sq/ stripped
+      expect(json.producers[0]).toEqual({
+        name: "Kanye West",
+        url: "https://www.albumoftheyear.org/artist/183-kanye-west/",
+        image: "https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg",
+      });
+    } finally {
+      restore();
+    }
+  });
 
   it("handles /album/tracklist and /album/streaming routes", async () => {
     const albumHtml = `
-      <script type="application/ld+json">{"@type":"MusicAlbum","name":"Aquemini","byArtist":{"name":"OutKast"}}</script>
+      <script type="application/ld+json">{"@type":"MusicAlbum","name":"Aquemini","byArtist":{"name":"OutKast","url":"https://www.albumoftheyear.org/artist/1-outkast/"}}</script>
       <div id="tracklist"><table class="trackListTable"><tr><td class="trackNumber">1.</td><td class="trackTitle"><a href="/song/1-hold-on/">Hold On</a></td><td class="trackLength">3:00</td></tr></table></div>
       <div class="albumLinksFlex"><a href="https://open.spotify.com/album/123" title="Spotify" rel="nofollow">Spotify</a></div>
     `;
-    const restore = mockFetch(async () => new Response(albumHtml, { status: 200 }));
+    const artistHtml = `
+      <meta property="og:image" content="https://cdn.albumoftheyear.org/artists/outkast_1.jpg" />
+      <meta property="og:url" content="https://www.albumoftheyear.org/artist/1-outkast/" />
+      <h1 class="artistHeadline">OutKast</h1>
+    `;
+    const restore = mockFetch(async (input) => {
+      const u = String(input);
+      if (u.includes("/artist/")) return new Response(artistHtml, { status: 200 });
+      return new Response(albumHtml, { status: 200 });
+    });
 
     try {
       const resTracklist = await worker.fetch(req("/album/tracklist?slug=2915-outkast-aquemini"), env);
       expect(resTracklist.status).toBe(200);
-      const jsonTracklist = (await resTracklist.json()) as { title: string; artist: string; tracklist: Array<{ title: string; number: string }> };
+      const jsonTracklist = (await resTracklist.json()) as { title: string; artist: string; artistUrl: string; artistImage: string | null; tracklist: Array<{ title: string; number: string }> };
       expect(jsonTracklist.title).toBe("Aquemini");
       expect(jsonTracklist.artist).toBe("OutKast");
+      expect(jsonTracklist.artistUrl).toBe("https://www.albumoftheyear.org/artist/1-outkast/");
+      expect(jsonTracklist.artistImage).toBe("https://cdn.albumoftheyear.org/artists/outkast_1.jpg");
       expect(jsonTracklist.tracklist.length).toBe(1);
       expect(jsonTracklist.tracklist[0]?.title).toBe("Hold On");
 
       const resStreaming = await worker.fetch(req("/album/streaming?slug=2915-outkast-aquemini"), env);
       expect(resStreaming.status).toBe(200);
-      const jsonStreaming = (await resStreaming.json()) as { title: string; streamingLinks: Array<{ platform: string; url: string }> };
+      const jsonStreaming = (await resStreaming.json()) as { title: string; artistUrl: string; artistImage: string | null; streamingLinks: Array<{ platform: string; url: string }> };
       expect(jsonStreaming.title).toBe("Aquemini");
+      expect(jsonStreaming.artistUrl).toBe("https://www.albumoftheyear.org/artist/1-outkast/");
+      expect(jsonStreaming.artistImage).toBe("https://cdn.albumoftheyear.org/artists/outkast_1.jpg");
       expect(jsonStreaming.streamingLinks.length).toBe(1);
       expect(jsonStreaming.streamingLinks[0]?.platform).toBe("Spotify");
 

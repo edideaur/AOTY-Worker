@@ -37,6 +37,9 @@ describe("scrapeAlbumBlocks unit test", () => {
     expect(albums.length).toBe(1);
     const a = albums[0];
     expect(a.artist).toBe("Kanye West");
+    // plain-text artistTitle carries no link
+    expect(a.artistUrl).toBe("");
+    expect(a.artistImage).toBeNull();
     expect(a.title).toBe("My Beautiful Dark Twisted Fantasy");
     expect(a.url).toContain("/album/1998-kanye-west-my-beautiful-dark-twisted-fantasy.php");
     expect(a.mediaType).toBe("lp");
@@ -45,6 +48,33 @@ describe("scrapeAlbumBlocks unit test", () => {
     expect(a.criticCount).toBe(45);
     expect(a.userScore).toBe(91);
     expect(a.userCount).toBe(15200);
+  });
+
+  it("captures linked artistTitles and ignores non-artist links", async () => {
+    const html = `
+      <div class="albumBlock" data-type="lp">
+        <div class="image"><a href="/album/1-x/"><img src="https://cdn.aoty.org/x.jpg" /></a></div>
+        <div class="artistTitle"><a href="/artist/183-kanye-west/">Kanye West</a></div>
+        <div class="albumTitle"><a href="/album/1-x/">Album X</a></div>
+      </div>
+      <div class="albumBlock" data-type="lp">
+        <div class="image"><a href="/album/2-y/"><img src="https://cdn.aoty.org/y.jpg" /></a></div>
+        <a href="/artist/2002-death-grips/"><div class="artistTitle">Death Grips</div></a>
+        <div class="albumTitle"><a href="/album/2-y/">Album Y</a></div>
+      </div>
+    `;
+
+    const albums = await scrapeAlbumBlocks(new Response(html));
+
+    expect(albums.length).toBe(2);
+    // link nested inside artistTitle
+    expect(albums[0].artist).toBe("Kanye West");
+    expect(albums[0].artistUrl).toBe("https://www.albumoftheyear.org/artist/183-kanye-west/");
+    expect(albums[0].artistImage).toBeNull();
+    // artistTitle wrapped in the artist link
+    expect(albums[1].artist).toBe("Death Grips");
+    expect(albums[1].artistUrl).toBe("https://www.albumoftheyear.org/artist/2002-death-grips/");
+    expect(albums[1].artistImage).toBeNull();
   });
 });
 

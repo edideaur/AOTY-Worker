@@ -1,6 +1,7 @@
-import { BASE, FETCH_OPTS, decodeEntities, parseCount, parseScore, parseExactScore, parseId, parseRank, parseTrackNumber, parseYear, parsePercent, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, cleanImageUrl, decodeEntities, parseCount, parseScore, parseExactScore, parseId, parseRank, parseTrackNumber, parseYear, parsePercent, type FetchOpts } from "../constants.js";
 import type {
   AotyComment,
+  ArtistLink,
   NamedLink,
   SongCredit,
   SongDetail,
@@ -10,6 +11,7 @@ import type {
   SongsBestResult,
   TopSong,
 } from "../types.js";
+import { fetchArtistImage } from "./artist.js";
 
 export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OPTS): Promise<SongDetail> {
   const res = await fetch(pageUrl, opts);
@@ -50,7 +52,7 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
     })
     .on(".albumHeaderCover img", {
       element(el) {
-        if (!s.cover) s.cover = el.getAttribute("src") ?? null;
+        if (!s.cover) s.cover = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".songScore", {
@@ -119,6 +121,7 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
         return [{
           name: decodeEntities(n.trim()),
           url: u.startsWith("http") ? u : BASE + u,
+          image: null,
         }];
       });
       if (artists.length) parsed.push({ role, artists });
@@ -196,7 +199,7 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
       id: parseId(id) ?? 0,
       username: userM?.[2] ? decodeEntities(userM[2].trim()) : "",
       userUrl: userM?.[1] ? (userM[1].startsWith("http") ? userM[1] : BASE + userM[1]) : "",
-      avatar: avatarM?.[1] ? avatarM[1] : null,
+      avatar: avatarM?.[1] ? cleanImageUrl(avatarM[1]) : null,
       date: dateM?.[2] ? dateM[2].trim() : "",
       dateExact: dateM?.[1] ? dateM[1].trim() : "",
       text: textM?.[1] ? decodeEntities(textM[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()) : "",
@@ -204,13 +207,16 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
     });
   }
 
+  const artistImage = await fetchArtistImage(s.artistUrl, opts);
+
   return {
     url: pageUrl,
     id: parseId(idM?.[1]),
     title: decodeEntities(s.title.trim()),
     artist: decodeEntities(s.artist.trim()),
     artistUrl: s.artistUrl,
-    cover: s.cover,
+    artistImage,
+    cover: cleanImageUrl(s.cover),
     album: s.album,
     albumUrl: s.albumUrl,
     trackNumber: s.trackNumber ? parseTrackNumber(s.trackNumber) : null,
@@ -250,7 +256,7 @@ async function scrapeSongRatingRows(res: Response): Promise<SongRating[]> {
     })
     .on(".songRatings .cell.profilePic img", {
       element(el) {
-        if (st.cur) st.cur.avatar = el.getAttribute("src") ?? null;
+        if (st.cur) st.cur.avatar = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".songRatings .cell.userName a", {
@@ -283,7 +289,7 @@ async function scrapeSongRatingRows(res: Response): Promise<SongRating[]> {
     .map((r) => ({
       username: decodeEntities((r.username ?? "").trim()),
       userUrl: r.userUrl ?? "",
-      avatar: r.avatar ?? null,
+      avatar: cleanImageUrl(r.avatar ?? null),
       rating: parseScore((r.rating ?? "").trim()),
       date: (r.date ?? "").trim() || null,
     }));
@@ -314,7 +320,7 @@ export async function scrapeTopSongs(period: string, page: number, opts: FetchOp
     })
     .on(".coverart img", {
       element(el) {
-        if (cur) cur.cover = el.getAttribute("src") ?? null;
+        if (cur) cur.cover = cleanImageUrl(el.getAttribute("src") ?? null);
       },
     })
     .on(".songAlbum a", {
@@ -368,9 +374,10 @@ export async function scrapeTopSongs(period: string, page: number, opts: FetchOp
         url: x.url ?? "",
         artist: decodeEntities((x.artist ?? "").trim()),
         artistUrl: x.artistUrl ?? "",
+        artistImage: null,
         album: x.album ? decodeEntities((x.album as string).trim()) : null,
         albumUrl: x.albumUrl ?? null,
-        cover: x.cover ?? null,
+        cover: cleanImageUrl(x.cover ?? null),
         score: parseScore((x.score ?? "").trim()),
         ratingCount: parseCount((x.ratingCount ?? "").replace(/Ratings?/i, "").trim()),
       })),
@@ -404,13 +411,14 @@ export async function scrapeBestSongsYearEnd(
     const title = songM?.[2] ? decodeEntities(songM[2].trim()) : "";
 
     const artistBlockM = r.match(/<h2 class="artistTitle listSummary song">([\s\S]*?)<\/h2>/);
-    const artists: NamedLink[] = [];
+    const artists: ArtistLink[] = [];
     if (artistBlockM?.[1]) {
       for (const am of artistBlockM[1].matchAll(/<a [^>]*href="([^"]+)">([^<]+)<\/a>/g)) {
         if (am[1] && am[2]) {
           artists.push({
             name: decodeEntities(am[2].trim()),
             url: am[1].startsWith("http") ? am[1] : BASE + am[1],
+            image: null,
           });
         }
       }
@@ -429,10 +437,11 @@ export async function scrapeBestSongsYearEnd(
         rank,
         artist,
         artistUrl,
+        artistImage: null,
         artists,
         title,
         url: songUrl,
-        cover,
+        cover: cleanImageUrl(cover),
         points,
         listsCount,
       });
