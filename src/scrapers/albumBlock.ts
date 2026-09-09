@@ -1,6 +1,16 @@
 import { BASE, decodeEntities, cleanImageUrl, parseCount, parseScore } from "../constants.js";
 import type { AlbumBlock } from "../types.js";
 
+/** Audience scope from a must-hear badge wrapper class (e.g. "image mustHear both"). */
+export function mustHearScopeFromClass(classAttr: string | null | undefined): "both" | "user" | "critic" | null {
+  if (!classAttr) return null;
+  const cls = ` ${classAttr} `;
+  if (!cls.includes("mustHear")) return null;
+  if (cls.includes(" both ")) return "both";
+  if (cls.includes(" user ")) return "user";
+  return "critic";
+}
+
 type RawAlbumBlock = {
   url: string;
   artist: string;
@@ -14,6 +24,8 @@ type RawAlbumBlock = {
   userScore: string | null;
   userCount: string | null;
   mustHear: boolean;
+  mustHearScope: "both" | "user" | "critic" | null;
+  locked: boolean;
 };
 
 export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
@@ -38,6 +50,8 @@ export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
           userScore: null,
           userCount: null,
           mustHear: false,
+          mustHearScope: null,
+          locked: false,
         };
         rawAlbums.push(cur);
         lastRatingType = null;
@@ -59,7 +73,27 @@ export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
     })
     .on(".albumBlock .image .mustHear", {
       element() {
-        if (cur) cur.mustHear = true;
+        if (cur) {
+          cur.mustHear = true;
+          if (cur.mustHearScope === null) cur.mustHearScope = "critic";
+        }
+      },
+    })
+    // Locked (no-cover art) releases render .noCover instead of an <img>
+    .on(".albumBlock .noCover", {
+      element() {
+        if (cur) cur.locked = true;
+      },
+    })
+    // Audience scope lives on the wrapping .image (mustHear both|user) on live pages
+    .on(".albumBlock .image", {
+      element(el) {
+        if (!cur) return;
+        const scope = mustHearScopeFromClass(el.getAttribute("class"));
+        if (scope) {
+          cur.mustHear = true;
+          cur.mustHearScope = scope;
+        }
       },
     })
     .on(".albumBlock .artistTitle", {
@@ -131,5 +165,7 @@ export async function scrapeAlbumBlocks(res: Response): Promise<AlbumBlock[]> {
     userScore: parseScore(a.userScore),
     userCount: parseCount(a.userCount),
     mustHear: a.mustHear,
+    mustHearScope: a.mustHearScope,
+    locked: a.locked ?? false,
   }));
 }

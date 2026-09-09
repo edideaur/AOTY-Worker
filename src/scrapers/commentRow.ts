@@ -4,8 +4,10 @@ import type { AotyComment } from "../types.js";
 type RawComment = {
   id: string;
   username: string;
+  usernameColor: string | null;
   userUrl: string;
   avatar: string | null;
+  subscriber: boolean;
   date: string;
   dateExact: string;
   text: string;
@@ -19,7 +21,10 @@ export async function scrapeCommentRows(res: Response): Promise<AotyComment[]> {
     .on(".commentRow", {
       element(el) {
         if (st.cur) st.cur.text = st.textBuf.trim();
-        st.cur = { id: (el.getAttribute("id") ?? "").replace("comment_", ""), username: "", userUrl: "", avatar: null, date: "", dateExact: "", text: "", replies: "" };
+        // IDs vary by context: comment_123 (albums), comment123 (news), reply123 (threads).
+        const rawId = el.getAttribute("id") ?? "";
+        const idM = rawId.match(/(?:comment_|comment|reply)(\d+)/) ?? rawId.match(/(\d+)\s*$/);
+        st.cur = { id: idM?.[1] ?? "", username: "", usernameColor: null, userUrl: "", avatar: null, subscriber: false, date: "", dateExact: "", text: "", replies: "" };
         comments.push(st.cur);
         st.textBuf = "";
       },
@@ -36,8 +41,20 @@ export async function scrapeCommentRows(res: Response): Promise<AotyComment[]> {
       },
     })
     .on(".commentRow .commentUserName a", {
+      element(el) {
+        if (st.cur && !st.cur.usernameColor) {
+          const style = el.getAttribute("style") ?? "";
+          const colorM = style.match(/color\s*:\s*([^;]+)/i);
+          if (colorM?.[1]) st.cur.usernameColor = colorM[1].trim();
+        }
+      },
       text(t) {
         if (st.cur) st.cur.username = (st.cur.username ?? "") + t.text;
+      },
+    })
+    .on(".commentRow .commentUserName .donor, .commentRow .donor", {
+      element() {
+        if (st.cur) st.cur.subscriber = true;
       },
     })
     .on(".commentRow .commentDate", {
@@ -64,8 +81,10 @@ export async function scrapeCommentRows(res: Response): Promise<AotyComment[]> {
   return comments.map((c) => ({
     id: parseId(c.id) ?? 0,
     username: decodeEntities((c.username ?? "").trim()),
+    usernameColor: c.usernameColor ?? null,
     userUrl: c.userUrl ?? "",
     avatar: cleanImageUrl(c.avatar ?? null),
+    subscriber: c.subscriber ?? false,
     date: (c.date ?? "").trim(),
     dateExact: c.dateExact ?? "",
     text: decodeEntities((c.text ?? "").trim()),

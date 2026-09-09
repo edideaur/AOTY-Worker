@@ -1,6 +1,7 @@
 import { BASE, FETCH_OPTS, cleanImageUrl, decodeEntities, parseCount, parseScore, parseId, parseRank, parseTrackNumber, parseYear, parsePercent, type FetchOpts } from "../constants.js";
-import { scrapeAlbumBlocks } from "./albumBlock.js";
+import { scrapeAlbumBlocks, mustHearScopeFromClass } from "./albumBlock.js";
 import { scrapeCommentRows } from "./commentRow.js";
+import { parseDiscussionTable } from "./social.js";
 import { scrapeUserListRows } from "./userListRow.js";
 import { parseAlbumUserReviewRows } from "./album.js";
 import { fetchArtistImage } from "./artist.js";
@@ -9,8 +10,14 @@ import type {
   AlbumDistributionRow,
   AlbumUserReviewsResult,
   ArtistLink,
+  DiscussionEntry,
+  FollowArtist,
+  FollowUser,
+  NamedLink,
+  SearchArtist,
   StreamingLink,
   UserBadgeItem,
+  UserBestOfYear,
   UserDistributionResult,
   UserGenreItem,
   UserListDetail,
@@ -97,10 +104,124 @@ export async function scrapeUserProfile(username: string, opts: FetchOpts = FETC
   }
 
   let favorites: AlbumBlock[] = [];
+  let favoriteArtists: SearchArtist[] = [];
   const favBlockM = html.match(/<div id="favBlock"[^>]*>([\s\S]*?)<\/section>/);
   if (favBlockM?.[1]) {
     const favRes = new Response(favBlockM[1]);
     favorites = await scrapeAlbumBlocks(favRes);
+    // Artist-mode favorites render .artistBlock cards instead.
+    if (favorites.length === 0) {
+      const favArtists: SearchArtist[] = [];
+      let favCur: SearchArtist | null = null;
+      await new HTMLRewriter()
+        .on(".artistBlock", {
+          element() {
+            favCur = { url: "", name: "", image: null };
+            favArtists.push(favCur);
+          },
+        })
+        .on(".artistBlock a", {
+          element(el) {
+            const href = el.getAttribute("href") ?? "";
+            if (favCur && !favCur.url && href.includes("/artist/")) {
+              favCur.url = href.startsWith("http") ? href : BASE + href;
+            }
+          },
+        })
+        .on(".artistBlock img", {
+          element(el) {
+            if (favCur) favCur.image = cleanImageUrl(el.getAttribute("src") ?? null);
+          },
+        })
+        .on(".artistBlock .name", {
+          text(t) {
+            if (favCur) favCur.name = (favCur.name ?? "") + t.text;
+          },
+        })
+        .transform(new Response(favBlockM[1]))
+        .arrayBuffer();
+      favoriteArtists = favArtists
+        .filter((a) => (a.name ?? "").trim() || (a.url ?? "").trim())
+        .map((a) => ({ url: a.url ?? "", name: decodeEntities((a.name ?? "").trim()), image: cleanImageUrl(a.image ?? null) }));
+    }
+  }
+
+  // Activity rails share the profile fetch: slice each section by its heading.
+  const sliceSection = (heading: string): string => {
+    const start = html.indexOf(heading);
+    if (start === -1) return "";
+    const next = html.indexOf('<h2 class="sectionHeading">', start + heading.length);
+    return html.slice(start, next !== -1 ? next : start + 60000);
+  };
+
+  let recentlyRated: UserRating[] = [];
+  const ratedChunk = sliceSection("Recently Listened") || sliceSection("Recently Rated");
+  if (ratedChunk) recentlyRated = await scrapeUserAlbumBlocks(new Response(ratedChunk), actualUsername);
+
+  let bestOfYear: UserBestOfYear | null = null;
+  const bestIdx = html.indexOf("Best of ");
+  if (bestIdx !== -1) {
+    const bestChunk = sliceSection("Best of ");
+    const yearM = bestChunk.match(/\/ratings\/highest\/\?y=(\d{4})|(\d{4})<\/a>/);
+    const year = yearM?.[1] ? parseInt(yearM[1], 10) : yearM?.[2] ? parseInt(yearM[2], 10) : null;
+    if (bestChunk) bestOfYear = { year, ratings: await scrapeUserAlbumBlocks(new Response(bestChunk), actualUsername) };
+  }
+
+  let recentReviews: UserReview[] = [];
+  const revChunk = sliceSection("Recent Reviews");
+  if (revChunk) {
+    recentReviews = (await scrapeAlbumReviewRows(new Response(revChunk), actualUsername)).map((r) => ({
+      ...r,
+      username: r.username || actualUsername,
+      userUrl: r.userUrl || url,
+    }));
+  }
+
+  let recentLists: UserListEntry[] = [];
+  const listsChunk = sliceSection("Recent Lists");
+  if (listsChunk) {
+    const profileAvatar = cleanImageUrl(avatarM?.[1] ?? null);
+    recentLists = (await scrapeUserListRows(new Response(listsChunk))).map((l) => ({
+      ...l,
+      username: l.username || actualUsername,
+      userUrl: l.userUrl || url,
+      avatar: l.avatar ?? profileAvatar,
+    }));
+  }
+
+  // Right-rail previews: tags, following avatars.
+  const tagsPreview: string[] = [];
+  for (const m of html.matchAll(/<div class="tag[^"]*">\s*<a href="([^"]*\/tag\/[^"]*)">([^<]*)<\/a>\s*<\/div>/g)) {
+    const href = m[1] ?? "";
+    const name = m[2];
+    if (href.includes("/user/") && name !== undefined) {
+      const clean = decodeEntities(name.trim());
+      if (clean) tagsPreview.push(clean);
+    }
+  }
+
+  const followingPreview: SearchArtist[] = [];
+  const followingIdx = html.indexOf("Following (");
+  if (followingIdx !== -1) {
+    const nextBox = html.indexOf('<div class="rightBox">', followingIdx + 12);
+    const nextHeading = html.indexOf('<h2 class="sectionHeading">', followingIdx + 12);
+    let end = html.length;
+    if (nextBox !== -1) end = Math.min(end, nextBox);
+    if (nextHeading !== -1) end = Math.min(end, nextHeading);
+    const box = html.slice(followingIdx, end);
+    for (const m of box.matchAll(/<a href="(\/user\/[^"/]+\/)">([\s\S]*?)<\/a>/g)) {
+      const u = m[1] ?? "";
+      const inner = m[2] ?? "";
+      const imgM = inner.match(/<img[^>]*src="([^"]+)"/);
+      if (!u || !imgM?.[1]) continue;
+      const altM = inner.match(/alt="([^"]*)"/);
+      const seg = u.split("/").filter(Boolean).pop() ?? "";
+      followingPreview.push({
+        url: BASE + u,
+        name: decodeEntities((altM?.[1] || seg).trim()),
+        image: cleanImageUrl(imgM[1]),
+      });
+    }
   }
 
   return {
@@ -116,10 +237,19 @@ export async function scrapeUserProfile(username: string, opts: FetchOpts = FETC
     subscriber,
     ratingDistribution,
     favorites,
+    favoriteArtists,
     pinnedReview,
+    recentlyRated,
+    bestOfYear,
+    recentReviews,
+    recentLists,
+    tagsPreview,
+    followingPreview,
     yearEndLists,
     stats: {
-      ratings: parseCount(stats["ratings"]) ?? 0,
+      // AOTY labels the count "Listens" on live profiles ("Ratings" on older markup).
+      ratings: parseCount(stats["ratings"]) ?? parseCount(stats["listens"]) ?? 0,
+      listens: parseCount(stats["listens"]) ?? parseCount(stats["ratings"]) ?? 0,
       reviews: parseCount(stats["reviews"]) ?? 0,
       lists: parseCount(stats["lists"]) ?? 0,
       followers: parseCount(stats["followers"]) ?? 0,
@@ -199,6 +329,19 @@ export async function scrapeUserLikedAlbums(
   return { username, page, ratings: await scrapeUserAlbumBlocks(res, username) };
 }
 
+export async function scrapeUserSpinList(
+  username: string,
+  page: number,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<{ username: string; page: number; ratings: UserRating[] }> {
+  const url = page > 1
+    ? `${BASE}/user/${encodeURIComponent(username)}/spin-list/${page}/`
+    : `${BASE}/user/${encodeURIComponent(username)}/spin-list/`;
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`User spin list fetch failed: ${res.status}`);
+  return { username, page, ratings: await scrapeUserAlbumBlocks(res, username) };
+}
+
 export async function scrapeUserTags(
   username: string,
   scope: string,
@@ -265,7 +408,7 @@ export async function scrapeUserTagDetail(
 }
 
 async function scrapeUserAlbumBlocks(res: Response, username: string): Promise<UserRating[]> {
-  type RawUserRating = { url: string; artist: string; artistUrl: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean; userRating: string | null; ratedDate: string | null; reviewUrl: string | null };
+  type RawUserRating = { url: string; artist: string; artistUrl: string; title: string; cover: string; mediaType: string; releaseDate: string; criticScore: string | null; criticCount: string | null; userScore: string | null; userCount: string | null; mustHear: boolean; mustHearScope: "both" | "user" | "critic" | null; locked: boolean; userRating: string | null; ratedDate: string | null; reviewUrl: string | null; liked: boolean; hasTrackRatings: boolean };
   const ratings: RawUserRating[] = [];
   let cur: RawUserRating | null = null;
   let ratingValue = "";
@@ -274,7 +417,7 @@ async function scrapeUserAlbumBlocks(res: Response, username: string): Promise<U
   await new HTMLRewriter()
     .on(".albumBlock", {
       element(el) {
-        cur = { url: "", artist: "", artistUrl: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false, userRating: null, ratedDate: null, reviewUrl: null };
+        cur = { url: "", artist: "", artistUrl: "", title: "", cover: "", mediaType: el.getAttribute("data-type") ?? "", releaseDate: "", criticScore: null, criticCount: null, userScore: null, userCount: null, mustHear: false, mustHearScope: null, locked: false, userRating: null, ratedDate: null, reviewUrl: null, liked: false, hasTrackRatings: false };
         ratings.push(cur);
         lastRatingType = null;
         ratingValue = "";
@@ -295,7 +438,38 @@ async function scrapeUserAlbumBlocks(res: Response, username: string): Promise<U
     })
     .on(".albumBlock .image .mustHear", {
       element() {
-        if (cur) cur.mustHear = true;
+        if (cur) {
+          cur.mustHear = true;
+          if (cur.mustHearScope === null) cur.mustHearScope = "critic";
+        }
+      },
+    })
+    .on(".albumBlock .image", {
+      element(el) {
+        if (!cur) return;
+        const scope = mustHearScopeFromClass(el.getAttribute("class"));
+        if (scope) {
+          cur.mustHear = true;
+          cur.mustHearScope = scope;
+        }
+      },
+    })
+    // Heart icon links to the user's liked-albums list: this card is liked.
+    .on(".albumBlock .fa-heart", {
+      element() {
+        if (cur) cur.liked = true;
+      },
+    })
+    // Locked (no-cover art) releases render .noCover instead of an <img>.
+    .on(".albumBlock .noCover", {
+      element() {
+        if (cur) cur.locked = true;
+      },
+    })
+    // Per-track ratings expander for this album by this user.
+    .on(".albumBlock .showUserTrackRatings", {
+      element() {
+        if (cur) cur.hasTrackRatings = true;
       },
     })
     .on(".albumBlock .artistTitle", {
@@ -323,6 +497,16 @@ async function scrapeUserAlbumBlocks(res: Response, username: string): Promise<U
       },
     })
     .on(".albumBlock .ratingRow", {
+      element() {
+        ratingValue = "";
+        inRatingRow = true;
+      },
+      text(t) {
+        void t;
+      },
+    })
+    // Profile rails wrap the row in .ratingRowContainer instead.
+    .on(".albumBlock .ratingRowContainer", {
       element() {
         ratingValue = "";
         inRatingRow = true;
@@ -367,7 +551,9 @@ async function scrapeUserAlbumBlocks(res: Response, username: string): Promise<U
     .arrayBuffer();
   void inRatingRow;
 
-  return ratings.map((r) => ({
+  return ratings.map((r) => {
+    const albumIdM = r.url.match(/\/album\/(\d+)/);
+    return {
     url: r.url,
     artist: decodeEntities(r.artist.trim()),
     artistUrl: r.artistUrl,
@@ -381,10 +567,16 @@ async function scrapeUserAlbumBlocks(res: Response, username: string): Promise<U
     userScore: parseScore(r.userScore),
     userCount: parseCount(r.userCount),
     mustHear: r.mustHear,
+    mustHearScope: r.mustHearScope ?? null,
     userRating: parseScore(r.userRating),
     ratedDate: r.ratedDate,
     reviewUrl: r.reviewUrl,
-  }));
+    liked: r.liked ?? false,
+    albumId: albumIdM?.[1] ? parseInt(albumIdM[1], 10) : null,
+    hasTrackRatings: r.hasTrackRatings ?? false,
+    locked: r.locked ?? false,
+    };
+  });
 }
 
 export async function scrapeFollowList(
@@ -392,25 +584,28 @@ export async function scrapeFollowList(
   kind: "followers" | "following",
   page: number,
   opts: FetchOpts = FETCH_OPTS,
-): Promise<{ username: string; kind: string; page: number; users: import("../types.js").SearchArtist[] }> {
+): Promise<{ username: string; kind: string; page: number; users: FollowUser[] }> {
   const base = `${BASE}/user/${encodeURIComponent(username)}/${kind}/`;
   const url = page > 1 ? `${base}${page}/` : base;
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`User ${kind} fetch failed: ${res.status}`);
-  type RawArtist = { url: string; name: string; image: string | null };
-  const users: RawArtist[] = [];
-  const st: { cur: RawArtist | null } = { cur: null };
+  type RawFollow = { url: string; slug: string; name: string; image: string | null; subscriber: boolean };
+  const users: RawFollow[] = [];
+  const st: { cur: RawFollow | null } = { cur: null };
   await new HTMLRewriter()
     .on(".listRow.users", {
       element() {
-        st.cur = { url: "", name: "", image: null };
+        st.cur = { url: "", slug: "", name: "", image: null, subscriber: false };
         users.push(st.cur);
       },
     })
     .on(".listRow.users a[href*='/user/']", {
       element(el) {
         const href = el.getAttribute("href") ?? "";
-        if (st.cur && !st.cur.url && /^\/user\/[^/]+\/$/.test(href)) st.cur.url = BASE + href;
+        if (st.cur && !st.cur.url && /^\/user\/[^/]+\/$/.test(href)) {
+          st.cur.url = BASE + href;
+          st.cur.slug = href.split("/").filter(Boolean).pop() ?? "";
+        }
       },
     })
     .on(".listRow.users .profilePic img", {
@@ -423,6 +618,11 @@ export async function scrapeFollowList(
         if (st.cur) st.cur.name = (st.cur.name ?? "") + t.text;
       },
     })
+    .on(".listRow.users .donor", {
+      element() {
+        if (st.cur) st.cur.subscriber = true;
+      },
+    })
     .transform(res)
     .arrayBuffer();
   return {
@@ -431,22 +631,93 @@ export async function scrapeFollowList(
     page,
     users: users
       .filter((u) => (u.url ?? "").trim())
-      .map((u) => ({ url: u.url ?? "", name: decodeEntities((u.name ?? "").trim()), image: cleanImageUrl(u.image ?? null) })),
+      .map((u) => ({
+        url: u.url ?? "",
+        name: decodeEntities((u.name ?? "").trim()),
+        username: decodeEntities((u.slug ?? "").trim()),
+        image: cleanImageUrl(u.image ?? null),
+        subscriber: u.subscriber ?? false,
+      })),
+  };
+}
+
+/** Artists a user follows (/user/:username/following/artists/). */
+export async function scrapeFollowArtists(
+  username: string,
+  page: number,
+  opts: FetchOpts = FETCH_OPTS,
+): Promise<{ username: string; page: number; artists: FollowArtist[] }> {
+  const base = `${BASE}/user/${encodeURIComponent(username)}/following/artists/`;
+  const url = page > 1 ? `${base}${page}/` : base;
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`User following-artists fetch failed: ${res.status}`);
+  type RawFollowArtist = { url: string; name: string; image: string | null; hasImage: boolean; followers: string | null };
+  const artists: RawFollowArtist[] = [];
+  const st: { cur: RawFollowArtist | null } = { cur: null };
+  await new HTMLRewriter()
+    .on(".listRow.users", {
+      element() {
+        st.cur = { url: "", name: "", image: null, hasImage: false, followers: null };
+        artists.push(st.cur);
+      },
+    })
+    .on(".listRow.users a[href*='/artist/']", {
+      element(el) {
+        const href = el.getAttribute("href") ?? "";
+        if (st.cur && !st.cur.url && href.includes("/artist/")) {
+          st.cur.url = href.startsWith("http") ? href : BASE + href;
+        }
+      },
+    })
+    .on(".listRow.users .profilePic img", {
+      element(el) {
+        if (st.cur) {
+          st.cur.image = el.getAttribute("src") ?? null;
+          st.cur.hasImage = true;
+        }
+      },
+    })
+    .on(".listRow.users .userName", {
+      text(t) {
+        if (st.cur) st.cur.name = (st.cur.name ?? "") + t.text;
+      },
+    })
+    .on(".listRow.users .followStat", {
+      text(t) {
+        if (st.cur && !(st.cur.followers ?? "").trim()) st.cur.followers = (st.cur.followers ?? "") + t.text;
+      },
+    })
+    .transform(res)
+    .arrayBuffer();
+  return {
+    username,
+    page,
+    artists: artists
+      .filter((a) => (a.url ?? "").trim())
+      .map((a) => ({
+        url: a.url ?? "",
+        name: decodeEntities((a.name ?? "").trim()),
+        image: cleanImageUrl(a.image ?? null),
+        hasImage: a.hasImage ?? false,
+        followers: parseCount((a.followers ?? "").replace(/followers?/i, "").trim()),
+      })),
   };
 }
 
 export async function scrapeUserReviewBlocks(res: Response): Promise<UserReview[]> {
-  type RawReview = { url: string; artist: string; artistUrl: string; album: string; albumUrl: string; cover: string | null; username: string; userUrl: string; avatar: string | null; rating: string | null; text: string; likes: string; comments: string; date: string | null };
+  type RawReview = { id: string | null; url: string; artist: string; artistUrl: string; album: string; albumUrl: string; cover: string | null; username: string; userUrl: string; avatar: string | null; subscriber: boolean; rating: string | null; text: string; likes: string; comments: string; commentsUrl: string | null; date: string | null; dateExact: string | null };
   const reviews: RawReview[] = [];
-  const st: { cur: RawReview | null; textBuf: string; linkKind: "artist" | "album" | "user" | "review" | null } = { cur: null, textBuf: "", linkKind: null };
+  const st: { cur: RawReview | null; textBuf: string; linkKind: "artist" | "album" | "user" | "review" | null; linkHref: string; linkDepth: number } = { cur: null, textBuf: "", linkKind: null, linkHref: "", linkDepth: 0 };
   await new HTMLRewriter()
     .on(".userReviewBlock", {
-      element() {
+      element(el) {
         if (st.cur) st.cur.text = st.textBuf.trim();
-        st.cur = { url: "", artist: "", artistUrl: "", album: "", albumUrl: "", cover: null, username: "", userUrl: "", avatar: null, rating: null, text: "", likes: "", comments: "", date: null };
+        const idM = (el.getAttribute("id") ?? "").match(/(\d+)\s*$/);
+        st.cur = { id: idM?.[1] ?? null, url: "", artist: "", artistUrl: "", album: "", albumUrl: "", cover: null, username: "", userUrl: "", avatar: null, subscriber: false, rating: null, text: "", likes: "", comments: "", commentsUrl: null, date: null, dateExact: null };
         reviews.push(st.cur);
         st.textBuf = "";
         st.linkKind = null;
+        st.linkHref = "";
       },
     })
     .on(".userReviewBlock .cover a", {
@@ -507,6 +778,20 @@ export async function scrapeUserReviewBlocks(res: Response): Promise<UserReview[
         if (st.cur && st.linkKind === "user") st.cur.username = (st.cur.username ?? "") + t.text;
       },
     })
+    .on(".userReviewBlock .donor", {
+      element() {
+        if (st.cur) st.cur.subscriber = true;
+      },
+    })
+    .on(".userReviewBlock a", {
+      element(el) {
+        st.linkHref = el.getAttribute("href") ?? "";
+        st.linkDepth++;
+        el.onEndTag(() => {
+          st.linkDepth = Math.max(0, st.linkDepth - 1);
+        });
+      },
+    })
     .on(".userReviewBlock .rating", {
       text(t) {
         if (st.cur) st.cur.rating = ((st.cur.rating ?? "") as string) + t.text;
@@ -524,18 +809,38 @@ export async function scrapeUserReviewBlocks(res: Response): Promise<UserReview[
     })
     .on(".userReviewBlock .review_comments, .userReviewBlock .comment_count", {
       text(t) {
-        if (st.cur) st.cur.comments = (st.cur.comments ?? "") + t.text;
+        if (st.cur) {
+          st.cur.comments = (st.cur.comments ?? "") + t.text;
+          if (st.linkDepth > 0 && st.linkHref.includes("/album/") && !st.cur.commentsUrl) {
+            st.cur.commentsUrl = st.linkHref.startsWith("http") ? st.linkHref : BASE + st.linkHref;
+          }
+        }
       },
     })
     .on(".userReviewBlock .review_date", {
       element(el) {
         if (st.cur) {
           const attr = el.getAttribute("title");
-          if (attr !== null) st.cur.date = attr;
+          if (attr !== null) {
+            st.cur.date = attr;
+            st.cur.dateExact = attr;
+          }
         }
       },
       text(t) {
         if (st.cur && !st.cur.date) st.cur.date = (st.cur.date ?? "") + t.text;
+      },
+    })
+    // Home and community pages render the exact timestamp on .actionContainer
+    .on(".userReviewBlock .actionContainer", {
+      element(el) {
+        if (st.cur && !st.cur.date) {
+          const attr = el.getAttribute("title");
+          if (attr) {
+            st.cur.date = attr;
+            st.cur.dateExact = attr;
+          }
+        }
       },
     })
     .transform(res)
@@ -543,7 +848,11 @@ export async function scrapeUserReviewBlocks(res: Response): Promise<UserReview[
   if (st.cur) st.cur.text = st.textBuf.trim();
   return reviews
     .filter((r) => (r.album ?? "").trim() || (r.text ?? "").trim())
-    .map((r) => ({
+    .map((r) => {
+      const dateRaw = (r.date ?? "").trim();
+      const edited = /\*$/.test(dateRaw);
+      return {
+      reviewId: r.id ? parseInt(r.id, 10) : null,
       url: r.url ?? "",
       artist: decodeEntities((r.artist ?? "").trim()),
       artistUrl: r.artistUrl ?? "",
@@ -554,12 +863,18 @@ export async function scrapeUserReviewBlocks(res: Response): Promise<UserReview[
       username: decodeEntities((r.username ?? "").trim()),
       userUrl: r.userUrl ?? "",
       avatar: cleanImageUrl(r.avatar ?? null),
+      subscriber: r.subscriber ?? false,
       rating: parseScore((r.rating ?? "").trim()),
       text: decodeEntities((r.text ?? "").trim()),
+      isTruncated: /read more/i.test(r.text ?? ""),
       likes: parseCount((r.likes ?? "").trim()) ?? 0,
       comments: parseCount((r.comments ?? "").trim()) ?? 0,
-      date: (r.date ?? "").trim() || null,
-    }));
+      commentsUrl: r.commentsUrl ?? null,
+      date: dateRaw.replace(/\*$/, "").trim() || null,
+      dateExact: (r.dateExact ?? "").trim() || null,
+      edited,
+      };
+    });
 }
 
 export async function scrapeUserReviewsPage(username: string, page: number, sort: string, opts: FetchOpts = FETCH_OPTS): Promise<{ username: string; page: number; sort: string; reviews: UserReview[] }> {
@@ -572,20 +887,23 @@ export async function scrapeUserReviewsPage(username: string, page: number, sort
   return { username, page, sort, reviews: await scrapeAlbumReviewRows(res, username) };
 }
 
-async function scrapeAlbumReviewRows(res: Response, fallbackUsername: string | null): Promise<UserReview[]> {
+export async function scrapeAlbumReviewRows(res: Response, fallbackUsername: string | null): Promise<UserReview[]> {
   // Handles both `.albumReviewRow` variants:
   // - album page: reviewer avatar/name, no artist/album links
-  // - user page: artist/album links, review url, cover
-  type RawReview = { url: string; artist: string; artistUrl: string; album: string; albumUrl: string; cover: string | null; username: string; userUrl: string; avatar: string | null; rating: string | null; text: string; likes: string; comments: string; date: string | null };
+  // - user page and profile rails: artist/album links, review url, cover
+  type RawReview = { id: string | null; url: string; artist: string; artistUrl: string; album: string; albumUrl: string; cover: string | null; username: string; userUrl: string; avatar: string | null; subscriber: boolean; rating: string | null; text: string; likes: string; comments: string; commentsUrl: string | null; date: string | null; dateExact: string | null };
   const reviews: RawReview[] = [];
-  const st: { cur: RawReview | null; textBuf: string } = { cur: null, textBuf: "" };
+  const st: { cur: RawReview | null; textBuf: string; linkHref: string; linkDepth: number } = { cur: null, textBuf: "", linkHref: "", linkDepth: 0 };
   await new HTMLRewriter()
     .on(".albumReviewRow", {
-      element() {
+      element(el) {
         if (st.cur) st.cur.text = st.textBuf.trim();
-        st.cur = { url: "", artist: "", artistUrl: "", album: "", albumUrl: "", cover: null, username: fallbackUsername ?? "", userUrl: "", avatar: null, rating: null, text: "", likes: "", comments: "", date: null };
+        const idM = (el.getAttribute("id") ?? "").match(/(\d+)\s*$/);
+        st.cur = { id: idM?.[1] ?? null, url: "", artist: "", artistUrl: "", album: "", albumUrl: "", cover: null, username: fallbackUsername ?? "", userUrl: "", avatar: null, subscriber: false, rating: null, text: "", likes: "", comments: "", commentsUrl: null, date: null, dateExact: null };
         reviews.push(st.cur);
         st.textBuf = "";
+        st.linkHref = "";
+        st.linkDepth = 0;
       },
     })
     .on(".albumReviewRow .userReviewImage a", {
@@ -621,6 +939,20 @@ async function scrapeAlbumReviewRows(res: Response, fallbackUsername: string | n
       },
       text(t) {
         if (st.cur) st.cur.username = (st.cur.username ?? "") + t.text;
+      },
+    })
+    .on(".albumReviewRow .donor", {
+      element() {
+        if (st.cur) st.cur.subscriber = true;
+      },
+    })
+    .on(".albumReviewRow a", {
+      element(el) {
+        st.linkHref = el.getAttribute("href") ?? "";
+        st.linkDepth++;
+        el.onEndTag(() => {
+          st.linkDepth = Math.max(0, st.linkDepth - 1);
+        });
       },
     })
     .on(".albumReviewRow .artistTitle a", {
@@ -668,7 +1000,12 @@ async function scrapeAlbumReviewRows(res: Response, fallbackUsername: string | n
     })
     .on(".albumReviewRow .review_comments", {
       text(t) {
-        if (st.cur) st.cur.comments = (st.cur.comments ?? "") + t.text;
+        if (st.cur) {
+          st.cur.comments = (st.cur.comments ?? "") + t.text;
+          if (st.linkDepth > 0 && st.linkHref.includes("/album/") && !st.cur.commentsUrl) {
+            st.cur.commentsUrl = st.linkHref.startsWith("http") ? st.linkHref : BASE + st.linkHref;
+          }
+        }
       },
     })
     .on(".albumReviewRow .review_date", {
@@ -680,7 +1017,10 @@ async function scrapeAlbumReviewRows(res: Response, fallbackUsername: string | n
       element(el) {
         if (st.cur) {
           const attr = el.getAttribute("title");
-          if (attr !== null) st.cur.date = attr;
+          if (attr !== null) {
+            st.cur.date = attr;
+            st.cur.dateExact = attr;
+          }
         }
       },
     })
@@ -689,7 +1029,11 @@ async function scrapeAlbumReviewRows(res: Response, fallbackUsername: string | n
   if (st.cur) st.cur.text = st.textBuf.trim();
   return reviews
     .filter((r) => (r.username ?? "").trim())
-    .map((r) => ({
+    .map((r) => {
+      const dateRaw = (r.date ?? "").trim();
+      const edited = /\*$/.test(dateRaw);
+      return {
+      reviewId: r.id ? parseInt(r.id, 10) : null,
       url: r.url ?? "",
       artist: decodeEntities((r.artist ?? "").trim()),
       artistUrl: r.artistUrl ?? "",
@@ -700,12 +1044,18 @@ async function scrapeAlbumReviewRows(res: Response, fallbackUsername: string | n
       username: decodeEntities((r.username ?? "").trim()),
       userUrl: r.userUrl ?? "",
       avatar: cleanImageUrl(r.avatar ?? null),
+      subscriber: r.subscriber ?? false,
       rating: parseScore((r.rating ?? "").trim()),
       text: decodeEntities((r.text ?? "").replace(/read more\s*$/i, "").trim()),
+      isTruncated: /read more/i.test(r.text ?? ""),
       likes: parseCount((r.likes ?? "").trim()) ?? 0,
       comments: parseCount((r.comments ?? "").trim()) ?? 0,
-      date: (r.date ?? "").trim() || null,
-    }));
+      commentsUrl: r.commentsUrl ?? null,
+      date: dateRaw.replace(/\*$/, "").trim() || null,
+      dateExact: (r.dateExact ?? "").trim() || null,
+      edited,
+      };
+    });
 }
 
 export async function scrapeAlbumUserReviews(
@@ -747,15 +1097,46 @@ export async function scrapeAlbumUserReviews(
   }
 
   const reviews = await scrapeAlbumReviewRows(new Response(html), null);
+
+  // Album header context + pagination.
+  let header: AlbumUserReviewsResult["header"] = null;
+  const headerIdx = html.indexOf("albumHeader");
+  if (headerIdx !== -1) {
+    const chunk = html.slice(headerIdx, headerIdx + 4000);
+    const coverM = chunk.match(/<img[^>]*src="([^"]+)"/);
+    const artistM = chunk.match(/class="artist"[^>]*>[\s\S]*?<a href="([^"]*\/artist\/[^"]*)">([^<]*)<\/a>/)
+      ?? chunk.match(/<a href="([^"]*\/artist\/[^"]*)">([^<]*)<\/a>/);
+    const albumM = chunk.match(/<a href="([^"]*\/album\/[^"]*)">/);
+    const scoreM = chunk.match(/<div class="rating">([^<]*)<\/div>/);
+    const countM = chunk.match(/User Score\s*\(([\d,]+)\)/i);
+    header = {
+      cover: coverM?.[1] ? cleanImageUrl(coverM[1]) : null,
+      artist: artistM?.[2] ? decodeEntities(artistM[2].trim()) : "",
+      artistUrl: artistM?.[1] ? (artistM[1].startsWith("http") ? artistM[1] : BASE + artistM[1]) : "",
+      album: "",
+      albumUrl: albumM?.[1] ? (albumM[1].startsWith("http") ? albumM[1] : BASE + albumM[1]) : "",
+      userScore: parseScore((scoreM?.[1] ?? "").trim()),
+      userScoreCount: countM?.[1] ? parseInt(countM[1].replace(/,/g, ""), 10) : null,
+    };
+  }
+  let totalPages: number | null = null;
+  for (const m of html.matchAll(/[?&]p=(\d+)[^"]*"[^>]*>\s*<div class="pageSelectSmall"/g)) {
+    const n = parseInt(m[1] ?? "", 10);
+    if (Number.isFinite(n) && (totalPages === null || n > totalPages)) totalPages = n;
+  }
+  const commentsM = html.match(/Comments \((\d[\d,]*)\)/);
   return {
     slug: albumSlug,
     sort,
     type,
     page,
     totalRatings: totalRatingsM?.[1] ? (parseCount(totalRatingsM[1])) : null,
+    totalPages,
+    commentCount: commentsM?.[1] ? parseInt(commentsM[1].replace(/,/g, ""), 10) : null,
     likePercentage: parsePercent(likePctM?.[1]),
     dislikePercentage: parsePercent(dislikePctM?.[1]),
     distribution,
+    header,
     reviews,
   };
 }
@@ -867,40 +1248,102 @@ export async function scrapeUserReviewDetail(username: string, slug: string, opt
   const commentsCount = commentsCountM?.[1] ?? "0";
 
   const streamingLinks: StreamingLink[] = [];
-  const linksIdx = html.indexOf('class="albumListLinks');
-  if (linksIdx !== -1) {
-    const linksChunk = html.slice(linksIdx, linksIdx + 2000);
-    for (const link of linksChunk.matchAll(/<a [^>]*href="([^"]+)"[^>]*>\s*<div>([^<]+)<\/div>\s*<\/a>/g)) {
-      if (link[1] && link[2]) {
-        streamingLinks.push({ platform: decodeEntities(link[2].trim()), url: link[1] });
+  const listenIdx = html.indexOf('class="listenOn');
+  if (listenIdx !== -1) {
+    // Live markup: <div class="amazon"><a href="...">…<span>Amazon</span></a></div>
+    const listenChunk = html.slice(listenIdx, listenIdx + 4000);
+    const PLATFORM_BY_CLASS: Record<string, string> = {
+      amazon: "Amazon",
+      appleMusic: "Apple Music",
+      apple: "Apple Music",
+      spotify: "Spotify",
+      soundcloud: "SoundCloud",
+      bandcamp: "Bandcamp",
+      vinyl: "Vinyl",
+    };
+    for (const link of listenChunk.matchAll(/<div class="([a-zA-Z]+)"><a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
+      const cls = link[1] ?? "";
+      const href = link[2] ?? "";
+      const inner = link[3] ?? "";
+      if (!href.startsWith("http")) continue;
+      const spanM = inner.match(/<span[^>]*>([^<]+)<\/span>/);
+      const platform = spanM?.[1] ? decodeEntities(spanM[1].trim()) : (PLATFORM_BY_CLASS[cls] ?? cls);
+      if (platform) streamingLinks.push({ platform, url: href });
+    }
+  }
+  if (streamingLinks.length === 0) {
+    const linksIdx = html.indexOf('class="albumListLinks');
+    if (linksIdx !== -1) {
+      const linksChunk = html.slice(linksIdx, linksIdx + 2000);
+      for (const link of linksChunk.matchAll(/<a [^>]*href="([^"]+)"[^>]*>\s*<div>([^<]+)<\/div>\s*<\/a>/g)) {
+        if (link[1] && link[2]) {
+          streamingLinks.push({ platform: decodeEntities(link[2].trim()), url: link[1] });
+        }
       }
     }
   }
 
-  const prevM = html.match(/«[\s\S]*?<a [^>]*href="([^"]*\/user\/[^"]*\/album\/[^"]*)"\s*title="([^"]*)"/i);
-  const nextM = html.match(/»[\s\S]*?<a [^>]*href="([^"]*\/user\/[^"]*\/album\/[^"]*)"\s*title="([^"]*)"/i);
-  const prevCoverM = html.match(/«[\s\S]*?<img [^>]*src="([^"]+)"/i);
-  const nextCoverM = html.match(/»[\s\S]*?<img [^>]*src="([^"]+)"/i);
+  // Prev/next review cards: link wraps the arrow (class names are swapped on site).
+  const edgeM = [...html.matchAll(/<a [^>]*href="([^"]*\/user\/[^"]*\/album\/[^"]*)"[^>]*title="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi)];
+  const pickEdge = (cls: string): { title: string; url: string; cover: string | null } | null => {
+    const hit = edgeM.find((m) => (m[3] ?? "").includes(cls));
+    if (!hit?.[1]) return null;
+    const coverM = (hit[3] ?? "").match(/<img [^>]*src="([^"]+)"/i);
+    return {
+      title: decodeEntities((hit[2] ?? "").trim()),
+      url: hit[1].startsWith("http") ? hit[1] : BASE + hit[1],
+      cover: cleanImageUrl(coverM?.[1] ?? null),
+    };
+  };
+  // Prev/next review cards: link wraps the arrow (« = older, » = newer).
+  // Older markup has the arrow outside the link: `« <a ...>`.
+  const legacyEdge = (arrow: string): { title: string; url: string; cover: string | null } | null => {
+    const m = html.match(
+      new RegExp(`${arrow}[\\s\\S]{0,300}?<a [^>]*href="([^"]*\\/user\\/[^"]*\\/album\\/[^"]*)"[^>]*title="([^"]*)"[^>]*>([\\s\\S]*?)<\\/a>`, "i"),
+    );
+    if (!m?.[1]) return null;
+    const coverM = (m[3] ?? "").match(/<img [^>]*src="([^"]+)"/i);
+    return {
+      title: decodeEntities((m[2] ?? "").trim()),
+      url: m[1].startsWith("http") ? m[1] : BASE + m[1],
+      cover: cleanImageUrl(coverM?.[1] ?? null),
+    };
+  };
+  // Fall back to the wrapper class names (which read swapped on live markup).
+  const previousReview = pickEdge("«") ?? legacyEdge("«") ?? pickEdge("prevAlbumReview");
+  const nextReview = pickEdge("»") ?? legacyEdge("»") ?? pickEdge("nextAlbumReview");
 
-  const previousReview = prevM?.[1]
-    ? {
-        title: decodeEntities((prevM[2] ?? "").trim()),
-        url: prevM[1].startsWith("http") ? prevM[1] : BASE + prevM[1],
-        cover: cleanImageUrl(prevCoverM?.[1] ?? null),
+  // Structured dates from JSON-LD + Related Content links.
+  const jsonLdM = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/i);
+  let datePublished: string | null = null;
+  let dateModified: string | null = null;
+  if (jsonLdM?.[1]) {
+    try {
+      const jsonLd = JSON.parse(jsonLdM[1]) as Record<string, unknown>;
+      datePublished = typeof jsonLd["datePublished"] === "string" ? jsonLd["datePublished"] : null;
+      dateModified = typeof jsonLd["dateModified"] === "string" ? jsonLd["dateModified"] : null;
+    } catch { /* ignore malformed JSON-LD */ }
+  }
+  const relatedLinks: NamedLink[] = [];
+  const relatedIdx = html.indexOf("Related Content");
+  if (relatedIdx !== -1) {
+    const relatedChunk = html.slice(relatedIdx, relatedIdx + 6000);
+    for (const m of relatedChunk.matchAll(/<div class="relatedRow">\s*<a href="([^"]+)">([^<]+)<\/a>/g)) {
+      const href = m[1] ?? "";
+      const name = m[2] ?? "";
+      if (href && name) {
+        relatedLinks.push({
+          name: decodeEntities(name.trim()),
+          url: href.startsWith("http") ? href : BASE + href,
+        });
       }
-    : null;
-
-  const nextReview = nextM?.[1]
-    ? {
-        title: decodeEntities((nextM[2] ?? "").trim()),
-        url: nextM[1].startsWith("http") ? nextM[1] : BASE + nextM[1],
-        cover: cleanImageUrl(nextCoverM?.[1] ?? null),
-      }
-    : null;
+    }
+  }
 
   const commentsList = await scrapeCommentRows(new Response(html));
 
   return {
+    reviewId: null,
     url,
     artist: decodeEntities(s.artist.trim()),
     artistUrl: s.artistUrl,
@@ -911,15 +1354,23 @@ export async function scrapeUserReviewDetail(username: string, slug: string, opt
     username,
     userUrl: `${BASE}/user/${encodeURIComponent(username)}/`,
     avatar: cleanImageUrl(s.avatar),
+    subscriber: false,
     rating: parseScore(s.rating.trim()),
     text: decodeEntities(s.text.trim()),
+    isTruncated: false,
     likes: parseCount(s.likes.trim()) ?? 0,
     comments: parseCount(commentsCount) ?? 0,
+    commentsUrl: null,
+    date: s.dateExact || s.date.trim() || null,
+    dateExact: s.dateExact || null,
+    edited: false,
     commentsList,
     streamingLinks,
     previousReview,
     nextReview,
-    date: s.dateExact || s.date.trim() || null,
+    datePublished,
+    dateModified,
+    relatedLinks,
     albumId: idM?.[1] ? (parseId(idM[1]) ?? null) : null,
     trackRatings: s.tracks
       .filter((t) => (t.title ?? "").trim())
@@ -946,11 +1397,20 @@ export async function scrapeUserListsIndex(opts: FetchOpts = FETCH_OPTS, page = 
   return scrapeUserListRows(res);
 }
 
-export async function scrapeSearchLists(query: string, opts: FetchOpts = FETCH_OPTS, page = 1): Promise<{ query: string; page: number; lists: UserListEntry[] }> {
+export async function scrapeSearchLists(query: string, opts: FetchOpts = FETCH_OPTS, page = 1): Promise<{ query: string; page: number; total: number | null; totalPages: number | null; lists: UserListEntry[] }> {
   const p = page > 1 ? `&p=${page}` : "";
   const res = await fetch(`${BASE}/search/lists/?q=${encodeURIComponent(query)}${p}`, opts);
   if (!res.ok) throw new Error(`List search failed: ${res.status}`);
-  return { query, page, lists: await scrapeUserListRows(res) };
+  const html = await res.text();
+  const lists = await scrapeUserListRows(new Response(html));
+  const totalM = html.match(/User Lists \(([\d,]+)\)/);
+  const total = totalM?.[1] ? parseInt(totalM[1].replace(/,/g, ""), 10) : null;
+  let totalPages: number | null = null;
+  for (const m of html.matchAll(/[?&]p=(\d+)[^"]*"[^>]*>\s*<div class="pageSelectSmall"/g)) {
+    const n = parseInt(m[1] ?? "", 10);
+    if (Number.isFinite(n) && (totalPages === null || n > totalPages)) totalPages = n;
+  }
+  return { query, page, total, totalPages, lists };
 }
 
 export async function scrapeUserListDetail(
@@ -965,11 +1425,10 @@ export async function scrapeUserListDetail(
   let url = `${BASE}/user/${encodeURIComponent(username)}/${path}/`;
   if (page > 1) url += `${page}/`;
   if (sort) url += `?sort=${encodeURIComponent(sort)}`;
-  const [detailRes, commentsRes] = await Promise.all([fetch(url, opts), fetch(url, opts)]);
-  if (!detailRes.ok) throw new Error(`User list fetch failed: ${detailRes.status}`);
-  if (!commentsRes.ok) throw new Error(`User list fetch failed: ${commentsRes.status}`);
-  const s = { title: "", description: "", items: [] as Array<{ rank: string; artist: string; artistUrl: string; title: string; url: string; cover: string | null; year: string | null }>, cur: null as { rank: string; artist: string; artistUrl: string; title: string; url: string; cover: string | null; year: string | null } | null };
-  const html = await detailRes.clone().text();
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`User list fetch failed: ${res.status}`);
+  const s = { title: "", description: "", items: [] as Array<{ rank: string; artist: string; artistUrl: string; title: string; url: string; cover: string | null; year: string | null; blurb: string; creatorRating: string | null }>, cur: null as { rank: string; artist: string; artistUrl: string; title: string; url: string; cover: string | null; year: string | null; blurb: string; creatorRating: string | null } | null };
+  const html = await res.text();
   await new HTMLRewriter()
     .on(".listHeader h1.headline, h1.headline", {
       text(t) {
@@ -978,7 +1437,7 @@ export async function scrapeUserListDetail(
     })
     .on(".userListRow", {
       element() {
-        s.cur = { rank: "", artist: "", artistUrl: "", title: "", url: "", cover: null, year: null };
+        s.cur = { rank: "", artist: "", artistUrl: "", title: "", url: "", cover: null, year: null, blurb: "", creatorRating: null };
         if (s.cur) s.items.push(s.cur);
       },
     })
@@ -996,6 +1455,16 @@ export async function scrapeUserListDetail(
     .on(".userListRow .userCover img", {
       element(el) {
         if (s.cur) s.cur.cover = el.getAttribute("src") ?? null;
+      },
+    })
+    .on(".userListRow .blurb", {
+      text(t) {
+        if (s.cur) s.cur.blurb = (s.cur.blurb ?? "") + t.text;
+      },
+    })
+    .on(".userListRow .ratingBlock .rating", {
+      text(t) {
+        if (s.cur && !(s.cur.creatorRating ?? "").trim()) s.cur.creatorRating = ((s.cur.creatorRating ?? "") as string) + t.text;
       },
     })
     .on(".userListRow .artistName a", {
@@ -1028,15 +1497,45 @@ export async function scrapeUserListDetail(
         }
       },
     })
-    .transform(detailRes)
+    .transform(new Response(html))
     .arrayBuffer();
   const descM = html.match(/<div class="listDescription">([\s\S]*?)<\/div>/);
-  const comments = await scrapeCommentRows(commentsRes);
+  const comments = await scrapeCommentRows(new Response(html));
+  // Header extras: likes, likers, updated time, author avatar, list ID.
+  const likesM = html.match(/<div class="likes">([^<]*)<\/div>/);
+  const updatedM = html.match(/<div class="updated">([^<]*)<\/div>/);
+  const authorAvatarM = html.match(/<div class="byLine">[\s\S]{0,500}?<img[^>]*src="([^"]+)"/);
+  const listIdM = url.match(/\/list\/(\d+)/);
+  const gridM = html.match(/<a href="([^"]*\/grid\/)">/);
+  const likers: SearchArtist[] = [];
+  const likesIdx = html.indexOf("Likes (");
+  if (likesIdx !== -1) {
+    const nextHeading = html.indexOf("sectionHeading", likesIdx + 7);
+    const likesChunk = html.slice(likesIdx, nextHeading !== -1 ? nextHeading : likesIdx + 8000);
+    for (const m of likesChunk.matchAll(/<a href="(\/user\/[^"/]+\/)"[^>]*><img[^>]*src="([^"]+)"[^>]*alt="([^"]*)"/g)) {
+      const u = m[1] ?? "";
+      const img = m[2] ?? null;
+      const alt = m[3] ?? "";
+      if (u) {
+        likers.push({
+          url: BASE + u,
+          name: decodeEntities((alt || u.split("/").filter(Boolean).pop() || "").trim()),
+          image: cleanImageUrl(img),
+        });
+      }
+    }
+  }
   return {
     url,
     title: decodeEntities(s.title.trim()),
     username,
     description: descM?.[1] ? decodeEntities(descM[1].replace(/<[^>]+>/g, "").trim()) : null,
+    likes: likesM?.[1] ? parseInt(likesM[1].replace(/,/g, "").trim(), 10) || 0 : 0,
+    likers,
+    updatedAgo: updatedM?.[1] ? decodeEntities(updatedM[1].trim()) : null,
+    authorAvatar: authorAvatarM?.[1] ? cleanImageUrl(authorAvatarM[1]) : null,
+    listId: listIdM?.[1] ? parseInt(listIdM[1], 10) : null,
+    gridUrl: gridM?.[1] ? (gridM[1].startsWith("http") ? gridM[1] : BASE + gridM[1]) : null,
     items: s.items.map((i, idx) => ({
       rank: parseRank((i.rank ?? "").replace(".", "").trim()) ?? idx + 1,
       artist: decodeEntities((i.artist ?? "").trim()),
@@ -1046,16 +1545,21 @@ export async function scrapeUserListDetail(
       url: i.url ?? "",
       cover: cleanImageUrl(i.cover ?? null),
       year: i.year ? parseYear(i.year) : null,
+      blurb: i.blurb ? decodeEntities(i.blurb.trim().replace(/\s+/g, " ")) : null,
+      creatorRating: parseScore((i.creatorRating ?? "").trim()),
     })),
     comments,
   };
 }
 
-export async function scrapeUsersCommunity(opts: FetchOpts = FETCH_OPTS): Promise<{ reviews: UserReview[]; lists: UserListEntry[] }> {
-  const [reviewsRes, listsRes] = await Promise.all([fetch(`${BASE}/users/`, opts), fetch(`${BASE}/users/`, opts)]);
-  if (!reviewsRes.ok || !listsRes.ok) throw new Error("Community fetch failed");
-  const [reviews, lists] = await Promise.all([scrapeUserReviewBlocks(reviewsRes), scrapeUserListRows(listsRes)]);
-  return { reviews, lists };
+export async function scrapeUsersCommunity(opts: FetchOpts = FETCH_OPTS): Promise<{ reviews: UserReview[]; lists: UserListEntry[]; discussions: DiscussionEntry[] }> {
+  const res = await fetch(`${BASE}/users/`, opts);
+  if (!res.ok) throw new Error("Community fetch failed");
+  const html = await res.text();
+  const [reviews, lists] = await Promise.all([scrapeUserReviewBlocks(new Response(html)), scrapeUserListRows(new Response(html))]);
+  // Recent Album Discussion table.
+  const discussions = parseDiscussionTable(html);
+  return { reviews, lists, discussions };
 }
 
 export async function scrapeUserGenres(

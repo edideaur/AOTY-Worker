@@ -17,12 +17,13 @@ describe("scrapeListsIndex unit test", () => {
 
     const restore = mockFetch(async () => new Response(html, { status: 200 }));
     try {
-      const lists = await scrapeListsIndex("https://www.albumoftheyear.org/lists.php");
+      const { lists, sections } = await scrapeListsIndex("https://www.albumoftheyear.org/lists.php");
       expect(lists.length).toBe(1);
       expect(lists[0]?.title).toBe("Pitchfork - 50 Best Albums of 2020");
       expect(lists[0]?.publication).toBe("Pitchfork");
       expect(lists[0]?.url).toContain("/list/100-pitchfork-best-of-2020/");
       expect(lists[0]?.cover).toBe("https://cdn.aoty.org/pitchfork.png");
+      expect(sections).toEqual([]);
     } finally {
       restore();
     }

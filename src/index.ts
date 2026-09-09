@@ -3,11 +3,11 @@ import { openApiSpec } from "./openapi.js";
 import { POSTMAN_BODY } from "./postman.js";
 import { scrapeAlbumBlocks } from "./scrapers/albumBlock.js";
 import { findAlbumUrl, scrapeAlbumCriticReviews, scrapeAlbumPage, scrapeAlbumTags, scrapeRandomAlbum, scrapeAlbumTagAutocomplete } from "./scrapers/album.js";
-import { scrapeNewsPage, scrapeNewsFeed, scrapeNewsFeedXml } from "./scrapers/news.js";
+import { scrapeNewsPageMeta, scrapeNewsFeed, scrapeNewsFeedXml } from "./scrapers/news.js";
 import { scrapeListsIndex, scrapeListDetail, scrapeYearEndSummary, scrapeCommunityYearEnd } from "./scrapers/lists.js";
 import { scrapeArtistSearch, scrapeLabelAutocomplete, scrapeLabelSearch, scrapeSearchAutocomplete, scrapeUserSearch } from "./scrapers/search.js";
 import { scrapeAlbumStats, scrapeAlbumCredits, scrapeAlbumRatingHistory, scrapeAlbumDistribution, scrapeAlbumUsers, scrapeAlbumImages } from "./scrapers/albumExtras.js";
-import { scrapeArtistPage, scrapeArtistTopSongs, scrapeSimilarArtists, scrapeArtistNews, scrapeArtistCredits, listArtistCreditRoles, scrapeRandomArtist, scrapeArtistDiscography, applyArtistImages, fetchArtistImage } from "./scrapers/artist.js";
+import { scrapeArtistPage, scrapeArtistTopSongs, scrapeSimilarArtists, scrapeArtistNews, scrapeArtistCredits, listArtistCreditRoles, scrapeRandomArtist, scrapeArtistDiscography, applyArtistImages, fetchArtistImage, scrapeArtistAka } from "./scrapers/artist.js";
 import {
   scrapeArtistsOverview,
   scrapeCriticPage,
@@ -22,11 +22,15 @@ import {
   scrapeGenreName,
   scrapeGenreAutocomplete,
   scrapeTagPage,
+  isTagSort,
 } from "./scrapers/entities.js";
-import { scrapeSongPage, scrapeSongRatingsPage, scrapeTopSongs, scrapeBestSongsYearEnd } from "./scrapers/song.js";
-import { scrapeRatingsChart, scrapeTopArtists, scrapeRatingSources, scrapeRatingGenres } from "./scrapers/charts.js";
+import { scrapeSongPage, scrapeSongRatingsPage, scrapeSongCriticLists, scrapeTopSongs, scrapeTopSongsPage, scrapeBestSongsYearEnd, scrapeBestSongsMeta, scrapeBestSongsLists } from "./scrapers/song.js";
+import { scrapeRatingsChartPage, scrapeTopArtists, scrapeRatingSources, scrapeRatingGenres } from "./scrapers/charts.js";
 import {
   scrapeAlbumCommentReplies,
+  scrapeListCommentReplies,
+  scrapeNewsEmbed,
+  scrapeStatsRefresh,
   scrapeAlbumCriticLists,
   scrapeAlbumUserLists,
   scrapeAlbumSubAlbums,
@@ -45,6 +49,7 @@ import {
 } from "./scrapers/social.js";
 import {
   scrapeAlbumUserReviews,
+  scrapeFollowArtists,
   scrapeFollowList,
   scrapeSearchLists,
   scrapeUserBadges,
@@ -60,6 +65,7 @@ import {
   scrapeUserReviewBlocks,
   scrapeUserReviewDetail,
   scrapeUserReviewsPage,
+  scrapeUserSpinList,
   scrapeUserTagDetail,
   scrapeUserTags,
   scrapeUsersCommunity,
@@ -68,7 +74,7 @@ import {
   scrapeUserArtistRatings,
   scrapeUserAlbumTrackRatings,
 } from "./scrapers/user.js";
-import type { RandomAlbumFilter } from "./types.js";
+import type { AlbumDetail, RandomAlbumFilter } from "./types.js";
 
 const OPENAPI_BODY = JSON.stringify(openApiSpec);
 
@@ -158,6 +164,7 @@ function computeTtl(path: string, q: URLSearchParams, data: unknown): number | u
     || path === "/album/stats"
     || path === "/user/ratings" || path === "/user/perfect" || path === "/user/reviews" || path === "/user/lists"
     || path === "/user/listened" || path === "/user/library" || path === "/user/liked-albums"
+    || path === "/user/spin-list" || path === "/user/following-artists"
     || path === "/user/tags" || path === "/user/tag" || path === "/user/genres" || path === "/user/badges"
     || path === "/user/stats" || path === "/user/favorites"
     || path.startsWith("/album/") || path === "/genre" || path === "/tag"
@@ -197,6 +204,7 @@ function computeTtl(path: string, q: URLSearchParams, data: unknown): number | u
   if (
     path === "/album/user-lists"
     || path === "/album/critic-lists"
+    || path === "/song/critic-lists"
     || path === "/album/critic-reviews"
     || path === "/album/reviews"
     || path === "/album/tags"
@@ -211,13 +219,14 @@ function computeTtl(path: string, q: URLSearchParams, data: unknown): number | u
     || path === "/ratings/sources"
     || path === "/ratings/genres"
     || path === "/publication/perfect"
+    || path === "/list/comments/replies"
   ) return TTL.MONTH;
 
-  if (path === "/artist/credits" || path === "/artist/news" || path === "/album/likes" || path === "/album/in-library" || path === "/user/artist-ratings" || path === "/user/track-ratings" || path === "/album/corrections" || path === "/artist/corrections" || path === "/song/corrections" || path === "/corrections") return TTL.DAY;
+  if (path === "/artist/credits" || path === "/artist/news" || path === "/artist/aka" || path === "/album/likes" || path === "/album/in-library" || path === "/user/artist-ratings" || path === "/user/track-ratings" || path === "/album/corrections" || path === "/artist/corrections" || path === "/song/corrections" || path === "/corrections" || path === "/news-item/embed") return TTL.DAY;
 
   if (path === "/user/followers" || path === "/user/following" || path === "/user/distribution") return TTL.DAY;
 
-  if (path === "/list/summary" || path === "/year-end" || path === "/songs/best" || path === "/user/year-end") {
+  if (path === "/list/summary" || path === "/year-end" || path === "/songs/best" || path === "/songs/best/lists" || path === "/user/year-end") {
     const year = q.get("year");
     if (year && parseInt(year, 10) < new Date().getFullYear()) return TTL.MONTH;
     return TTL.WEEK;
@@ -225,7 +234,7 @@ function computeTtl(path: string, q: URLSearchParams, data: unknown): number | u
 
   if (path.startsWith("/list/")) return TTL.MONTH;
 
-  if (path === "/album") {
+  if (path === "/album" || path === "/album/summary") {
     const datePublished = (data as { datePublished?: string })?.datePublished;
     if (datePublished) {
       const ageDays = (Date.now() - new Date(datePublished).getTime()) / 86_400_000;
@@ -589,14 +598,14 @@ async function fetchAlbumBlocks(aotyPath: string, opts: FetchOpts) {
 }
 
 const RESERVED_ALBUM_SUBPATHS = new Set([
-  "similar", "user-reviews", "critic-reviews", "reviews", "comments",
+  "similar", "summary", "user-reviews", "critic-reviews", "reviews", "comments",
   "tags", "rating-history", "distribution", "credits", "stats", "tracklist",
   "streaming", "streaming-links", "likes", "in-library", "library", "images",
   "corrections", "user-lists", "critic-lists",
 ]);
 
 const RESERVED_ARTIST_SUBPATHS = new Set([
-  "discography", "similar", "songs", "top-songs", "news", "credits", "corrections",
+  "discography", "similar", "songs", "top-songs", "news", "credits", "corrections", "aka",
 ]);
 
 const RESERVED_GENRE_SUBPATHS = new Set([
@@ -606,9 +615,81 @@ const RESERVED_GENRE_SUBPATHS = new Set([
 const RESERVED_USER_SUBPATHS = new Set([
   "ratings", "perfect", "reviews", "listened", "library", "liked-albums",
   "tags", "tag", "lists", "list", "stats", "favorites", "followers",
-  "following", "review", "genres", "badges", "year-end", "distribution",
-  "artist-ratings", "track-ratings",
+  "following", "following-artists", "review", "genres", "badges", "year-end", "distribution",
+  "artist-ratings", "track-ratings", "spin-list",
 ]);
+
+// Label listing sort orders (menu on label pages).
+const LABEL_SORTS = new Set([
+  "newest", "oldest",
+  "critic-highest", "critic-lowest",
+  "user-highest", "user-lowest",
+  "artist-name", "album-name",
+  "popularity", "likes",
+]);
+
+// Static / meta paths that cannot be embedded in a /batch request.
+// They return HTML, XML or plaintext rather than API JSON.
+const BATCH_BLOCKED_PATHS = new Set([
+  "/", "/scalar", "/redoc", "/swagger", "/rapidoc", "/rapipdf", "/elements",
+  "/openapi.json", "/openapi.yaml", "/postman.json", "/health", "/ping",
+  "/version.json", "/manifest.json", "/opensearch.xml", "/sitemap.xml",
+  "/feed/news.xml", "/robots.txt", "/humans.txt", "/favicon.ico",
+  "/.well-known/health", "/.well-known/openapi.json", "/.well-known/security.txt",
+  "/.well-known/ai-plugin.json", "/.well-known/api-catalog",
+  "/batch",
+]);
+
+export const BATCH_MAX_ITEMS = 10;
+export const BATCH_MAX_LENGTH = 4000;
+
+export interface BatchItemResult {
+  path: string;
+  status: number;
+  data?: unknown;
+  error?: string | null;
+}
+
+export function parseBatchPaths(value: unknown): string[] {
+  const items = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+  const clean = items
+    .filter((s): s is string => typeof s === "string")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (clean.length === 0) throw new ApiError("Provide at least one path", 400);
+  if (clean.length > BATCH_MAX_ITEMS) throw new ApiError(`Too many paths: max ${BATCH_MAX_ITEMS}`, 400);
+  if (clean.join(",").length > BATCH_MAX_LENGTH) throw new ApiError(`paths is too long (max ${BATCH_MAX_LENGTH} chars)`, 400);
+  for (const item of clean) {
+    if (item.length > 2000) throw new ApiError("Individual path is too long (max 2000 chars)", 400);
+  }
+  return clean;
+}
+
+export async function executeBatchPaths(items: string[], opts: FetchOpts): Promise<{ count: number; results: BatchItemResult[] }> {
+  const clean = parseBatchPaths(items);
+  const results: BatchItemResult[] = await Promise.all(
+    clean.map(async (item): Promise<BatchItemResult> => {
+      let sub: URL;
+      try {
+        sub = new URL(item, "http://batch.local");
+      } catch {
+        return { path: item, status: 400, error: "Invalid path" };
+      }
+      const subPath = sub.pathname;
+      if (BATCH_BLOCKED_PATHS.has(subPath) || subPath.startsWith("/.well-known/")) {
+        return { path: item, status: 400, error: `Path not allowed in batch: ${subPath}` };
+      }
+      try {
+        const data = await route(subPath, sub.searchParams, opts);
+        return { path: item, status: 200, data };
+      } catch (err) {
+        if (err instanceof ApiError) return { path: item, status: err.status, error: err.message };
+        return { path: item, status: 500, error: err instanceof Error ? err.message : "Unknown error" };
+      }
+    }),
+  );
+  return { count: results.length, results };
+}
 
 async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise<unknown> {
   let rawAlbumSlug = q.get("slug");
@@ -718,14 +799,16 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     const type = q.get("type") ?? "newsworthy";
     const validTypes = ["newsworthy", "new", "comment"];
     const feedType = validTypes.includes(type) ? type : "newsworthy";
-    return { page, type: feedType, items: await scrapeNewsPage(`${BASE}/l/${feedType}/${page}/`, opts) };
+    const { items, hasNextPage } = await scrapeNewsPageMeta(`${BASE}/l/${feedType}/${page}/`, opts);
+    return { page, type: feedType, hasNextPage, items };
   }
 
   const newsTypeMatch = path.match(/^\/news\/(newsworthy|new|comment)$/);
   if (newsTypeMatch?.[1]) {
     const feedType = newsTypeMatch[1];
     const page = getPage(q);
-    return { page, type: feedType, items: await scrapeNewsPage(`${BASE}/l/${feedType}/${page}/`, opts) };
+    const { items, hasNextPage } = await scrapeNewsPageMeta(`${BASE}/l/${feedType}/${page}/`, opts);
+    return { page, type: feedType, hasNextPage, items };
   }
 
   if (path === "/feed/news") {
@@ -742,7 +825,8 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     if (page > 1) params.set("p", String(page));
     const qs = params.toString();
     const aotyUrl = qs ? `${BASE}/lists.php?${qs}` : `${BASE}/lists.php`;
-    return { year: year ? parseInt(year, 10) : null, sort: sort ?? null, page, lists: await scrapeListsIndex(aotyUrl, opts) };
+    const { lists, sections } = await scrapeListsIndex(aotyUrl, opts);
+    return { year: year ? parseInt(year, 10) : null, sort: sort ?? null, page, lists, sections };
   }
 
   if (path === "/list/summary") {
@@ -913,6 +997,11 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeEntityCorrections("artist", slug, opts);
   }
 
+  if (path === "/artist/aka") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    return scrapeArtistAka(slug, opts);
+  }
+
   if (path === "/random/artist") {
     return scrapeRandomArtist(opts);
   }
@@ -977,16 +1066,29 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
   let rawLabelSlug = q.get("slug");
   if (!rawLabelSlug) {
     const m = path.match(/^\/label\/([^/]+)$/);
-    if (m?.[1] && m[1] !== "autocomplete") {
+    if (m?.[1] && m[1] !== "autocomplete" && m[1] !== "singles") {
       rawLabelSlug = m[1];
     }
   }
 
-  if (path === "/label" || (() => { const m = path.match(/^\/label\/([^/]+)$/); return !!m?.[1] && m[1] !== "autocomplete"; })()) {
+  if (path === "/label" || (() => { const m = path.match(/^\/label\/([^/]+)$/); return !!m?.[1] && m[1] !== "autocomplete" && m[1] !== "singles"; })()) {
     if (!rawLabelSlug) rawLabelSlug = getRequiredParam(q, "slug");
     const slug = normSlug(rawLabelSlug);
     const page = getPage(q);
-    const aotyPath = page > 1 ? `${BASE}/label/${slug}/${page}/` : `${BASE}/label/${slug}/`;
+    const sort = q.get("sort");
+    if (sort && !LABEL_SORTS.has(sort)) throw new ApiError(`Invalid sort: must be one of ${[...LABEL_SORTS].join(", ")}`, 400);
+    const sortQs = sort ? `?sort=${encodeURIComponent(sort)}` : "";
+    const aotyPath = page > 1 ? `${BASE}/label/${slug}/${page}/${sortQs}` : `${BASE}/label/${slug}/${sortQs}`;
+    return scrapeLabelPage(aotyPath, opts, page);
+  }
+
+  if (path === "/label/singles") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    const page = getPage(q);
+    const sort = q.get("sort");
+    if (sort && !LABEL_SORTS.has(sort)) throw new ApiError(`Invalid sort: must be one of ${[...LABEL_SORTS].join(", ")}`, 400);
+    const sortQs = sort ? `?sort=${encodeURIComponent(sort)}` : "";
+    const aotyPath = page > 1 ? `${BASE}/label/${slug}/singles/${page}/${sortQs}` : `${BASE}/label/${slug}/singles/${sortQs}`;
     return scrapeLabelPage(aotyPath, opts, page);
   }
 
@@ -1039,8 +1141,10 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     const tag = getRequiredParam(q, "tag");
     const type = q.get("type") ?? "albums";
     const year = q.get("year");
-    if (type !== "albums" && type !== "media") throw new ApiError("Invalid type: must be albums or media", 400);
-    return { ...(await scrapeTagPage(tag, type, year, opts, getPage(q))), page: getPage(q) };
+    if (type !== "albums" && type !== "media" && type !== "singles" && type !== "artists") throw new ApiError("Invalid type: must be albums, media, singles or artists", 400);
+    const sort = q.get("sort") ?? "popularity";
+    if (!isTagSort(sort)) throw new ApiError("Invalid sort: must be popularity, newest-first, critic-score or user-score", 400);
+    return { ...(await scrapeTagPage(tag, type, year, opts, getPage(q), sort)), page: getPage(q) };
   }
 
   if (path === "/publication") {
@@ -1082,7 +1186,7 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     const slug = normSlug(getRequiredParam(q, "slug"));
     const page = getPage(q);
     const aotyPath = page > 1 ? `${BASE}/critic/${slug}/${page}/` : `${BASE}/critic/${slug}/`;
-    return scrapeCriticPage(aotyPath, slug, opts);
+    return scrapeCriticPage(aotyPath, slug, opts, page);
   }
 
   if (path === "/song") {
@@ -1095,6 +1199,11 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeSongRatingsPage(slug, getPage(q), opts);
   }
 
+  if (path === "/song/critic-lists") {
+    const slug = normSlug(getRequiredParam(q, "slug"));
+    return scrapeSongCriticLists(slug, opts);
+  }
+
   if (path === "/song/corrections") {
     const id = q.get("songId") ?? q.get("slug");
     if (!id) throw new ApiError("Missing required parameter: songId or slug", 400);
@@ -1103,7 +1212,7 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
 
   if (path === "/songs/top") {
     const period = q.get("period") ?? q.get("year") ?? String(new Date().getFullYear());
-    return scrapeTopSongs(period, getPage(q), opts);
+    return scrapeTopSongsPage(period, getPage(q), opts);
   }
 
   if (path === "/songs/best") {
@@ -1112,7 +1221,20 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     const year = parseInt(rawYear.trim(), 10);
     const sort = q.get("sort") ?? "points";
     if (sort !== "points" && sort !== "lists") throw new ApiError("Invalid sort: must be points or lists", 400);
-    return scrapeBestSongsYearEnd(year, sort, opts);
+    const [result, meta] = await Promise.all([
+      scrapeBestSongsYearEnd(year, sort, opts),
+      scrapeBestSongsMeta(year, sort, opts).catch(() => null),
+    ]);
+    return { ...result, playlistUrl: meta?.playlistUrl ?? null, banner: meta?.banner ?? null, availableYears: meta?.availableYears ?? [] };
+  }
+
+  if (path === "/songs/best/lists") {
+    const rawYear = q.get("year") ?? String(new Date().getFullYear() - 1);
+    if (!/^\d{4}$/.test(rawYear.trim())) throw new ApiError("Invalid year format", 400);
+    const year = parseInt(rawYear.trim(), 10);
+    const sort = q.get("sort") ?? "points";
+    if (sort !== "points" && sort !== "lists") throw new ApiError("Invalid sort: must be points or lists", 400);
+    return scrapeBestSongsLists(year, sort, opts);
   }
 
   let rawUserSlug = q.get("username");
@@ -1201,6 +1323,16 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
   if (path === "/user/following") {
     const username = getRequiredParam(q, "username");
     return scrapeFollowList(username, "following", getPage(q), opts);
+  }
+
+  if (path === "/user/following-artists") {
+    const username = getRequiredParam(q, "username");
+    return scrapeFollowArtists(username, getPage(q), opts);
+  }
+
+  if (path === "/user/spin-list") {
+    const username = getRequiredParam(q, "username");
+    return scrapeUserSpinList(username, getPage(q), opts);
   }
 
   if (path === "/user/review") {
@@ -1318,7 +1450,8 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     if (sort === "standard") params.set("sort", "standard");
     if (minReviews) params.set("r", minReviews);
     const qs = params.toString();
-    return { source, period, page, items: await scrapeRatingsChart(qs ? `${aotyPath}?${qs}` : aotyPath, opts) };
+    const { items, totalPages } = await scrapeRatingsChartPage(qs ? `${aotyPath}?${qs}` : aotyPath, opts);
+    return { source, period, page, totalPages, items };
   }
 
   if (path === "/top-artists") {
@@ -1449,6 +1582,11 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
 
   if (path === "/news-item") {
     return scrapeNewsDetail(normSlug(getRequiredParam(q, "slug")), opts);
+  }
+
+  if (path === "/news-item/embed") {
+    const id = getRequiredParam(q, "id");
+    return scrapeNewsEmbed(id, opts);
   }
 
   if (path === "/album/similar") {
@@ -1630,11 +1768,18 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
     return scrapeAlbumCommentReplies(albumId, commentId, opts);
   }
 
+  if (path === "/list/comments/replies") {
+    const listId = getRequiredParam(q, "listId");
+    const commentId = getRequiredParam(q, "commentId");
+    return scrapeListCommentReplies(listId, commentId, opts);
+  }
+
   if (path === "/album/comments") {
     const slug = normSlug(getRequiredParam(q, "slug"));
     const page = getPage(q);
     const aotyPath = page > 1 ? `/album/${slug}/comments/${page}/` : `/album/${slug}/comments/`;
-    return { slug, page, comments: await scrapeCommentsPage(aotyPath, opts) };
+    const { comments, moreDiscussion } = await scrapeCommentsPage(aotyPath, opts);
+    return { slug, page, comments, moreDiscussion };
   }
 
   if (path === "/comments" || path === "/comments/all") {
@@ -1665,6 +1810,79 @@ async function route(path: string, q: URLSearchParams, opts: FetchOpts): Promise
 
   if (path === "/stats") {
     return scrapeSiteStats(opts);
+  }
+
+  if (path === "/stats/refresh") {
+    const key = getRequiredParam(q, "key");
+    return scrapeStatsRefresh(key, opts);
+  }
+
+  if (path === "/album/summary") {
+    const artist = q.get("artist");
+    const name = q.get("name");
+    const minimal = q.get("minimal") === "true";
+
+    let albumUrl: string | null;
+    if (rawAlbumSlug) {
+      const slug = normSlug(rawAlbumSlug);
+      albumUrl = `${BASE}/album/${slug}/`;
+    } else if (artist && name) {
+      albumUrl = await findAlbumUrl(artist, name, opts);
+      if (!albumUrl) throw new ApiError("Album not found", 404);
+    } else {
+      throw new ApiError("Provide either slug (ID or full slug) or both artist and name", 400);
+    }
+
+    const detail: AlbumDetail = await scrapeAlbumPage(albumUrl, opts);
+    const stats = !minimal && detail.id ? await scrapeAlbumStats(detail.id) : null;
+    return {
+      url: detail.url,
+      id: detail.id,
+      title: detail.title,
+      artist: detail.artist,
+      artistUrl: detail.artistUrl,
+      cover: detail.cover,
+      datePublished: detail.datePublished,
+      format: detail.format,
+      label: detail.label,
+      labelUrl: detail.labelUrl,
+      labels: detail.labels,
+      genres: detail.genres,
+      genreLinks: detail.genreLinks,
+      secondaryGenres: detail.secondaryGenres ?? [],
+      tags: detail.tags,
+      vibes: detail.vibes,
+      totalLength: detail.totalLength,
+      trackCount: detail.tracklist.length,
+      mustHear: detail.mustHear,
+      commentCount: detail.commentCount,
+      criticScore: detail.criticScore,
+      criticScoreExact: detail.criticScoreExact,
+      criticCount: detail.criticCount,
+      criticRanking: detail.criticRanking ?? null,
+      criticRankingAllTime: detail.criticRankingAllTime ?? null,
+      userScore: detail.userScore,
+      userScoreExact: detail.userScoreExact,
+      userCount: detail.userCount,
+      userRanking: detail.userRanking ?? null,
+      userRankingAllTime: detail.userRankingAllTime ?? null,
+      streamingLinks: detail.streamingLinks,
+      stats,
+    };
+  }
+
+  if (path === "/batch") {
+    return executeBatchPaths(parseBatchPaths(getRequiredParam(q, "paths")), opts);
+  }
+
+  if (path === "/status") {
+    return {
+      name: "aoty-api",
+      version: "1.0.0",
+      openapi: "3.1.0",
+      endpoints: Object.keys(openApiSpec.paths).length,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   if (path === "/guidelines") {
@@ -1773,7 +1991,7 @@ if (path === "/rapidoc") return htmlPage(RAPIDOC_HTML);
     }
 
     const skipCache = q.get("cache") === "false";
-    const noStore = path.startsWith("/random/");
+    const noStore = path.startsWith("/random/") || path === "/batch" || path === "/status" || path === "/stats/refresh";
     const baseOpts = skipCache || noStore ? FETCH_OPTS_FRESH : FETCH_OPTS;
     const fetchOpts: FetchOpts = {
       ...baseOpts,
@@ -1822,7 +2040,52 @@ if (path === "/rapidoc") return htmlPage(RAPIDOC_HTML);
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const method = request.method;
-    if (method === "OPTIONS") return corsOptions();
+    if (method === "OPTIONS") {
+      try {
+        const preflightUrl = new URL(request.url);
+        if (preflightUrl.pathname === "/batch") {
+          return new Response(null, {
+            status: 204,
+            headers: { ...RES_HEADERS, "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS" },
+          });
+        }
+      } catch {
+        // fall through to the default CORS response
+      }
+      return corsOptions();
+    }
+    if (method === "POST") {
+      let batchUrl: URL;
+      try {
+        batchUrl = new URL(request.url);
+      } catch {
+        return problem("Invalid request URL", 400);
+      }
+      if (batchUrl.pathname !== "/batch") {
+        return new Response(null, { status: 405, headers: { "Allow": "GET, HEAD, OPTIONS", "Access-Control-Allow-Origin": "*" } });
+      }
+      let parsed: unknown;
+      try {
+        const text = await request.text();
+        if (text.length > 8192) return problem("Request body too large (max 8KB)", 400);
+        parsed = text ? JSON.parse(text) : null;
+      } catch {
+        return problem("Invalid JSON body", 400);
+      }
+      try {
+        const items = parseBatchPaths((parsed as Record<string, unknown> | null)?.["paths"]);
+        const fetchOpts: FetchOpts = { ...FETCH_OPTS_FRESH, signal: AbortSignal.timeout(15_000) };
+        const rawData = await executeBatchPaths(items, fetchOpts);
+        const data = deepDecodeEntities(sanitizeImageUrls(rawData));
+        const body = JSON.stringify(data);
+        return new Response(body, {
+          headers: { ...RES_HEADERS, "X-Cache": "MISS", "Cache-Control": "no-store", "Link": `</openapi.json>; rel="service-desc"` },
+        });
+      } catch (err) {
+        if (err instanceof ApiError) return problem(err.message, err.status);
+        return problem(err instanceof Error ? err.message : "Unknown error", 500);
+      }
+    }
     if (method !== "GET" && method !== "HEAD") {
       return new Response(null, { status: 405, headers: { "Allow": "GET, HEAD, OPTIONS", "Access-Control-Allow-Origin": "*" } });
     }

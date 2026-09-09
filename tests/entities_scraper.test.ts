@@ -379,10 +379,12 @@ describe("entities scrapers unit tests", () => {
       let count = 0;
         globalThis.fetch = async () => {
         count++;
-        if (count === 1) return new Response("<h1>Label</h1>", { status: 200 });
-        return new Response("Error", { status: 500 });
+        return new Response('<h1 class="headline">Label</h1>', { status: 200 });
       };
-      expect(scrapeLabelPage("http://mock/label/1/")).rejects.toThrow("Label fetch failed: 500");
+      const labelOnce = await scrapeLabelPage("http://mock/label/1/");
+      expect(labelOnce.name).toBe("Label");
+      // Single upstream fetch now (was two parallel fetches before).
+      expect(count).toBe(1);
     } finally {
       globalThis.fetch = originalFetch;
     }

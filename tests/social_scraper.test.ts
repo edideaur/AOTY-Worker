@@ -112,12 +112,12 @@ describe("social scrapers unit tests", () => {
 
   it("parses changelog correctly", async () => {
     const html = `
-      <div class="changeSection">
+      <section class="changeSection">
         <div class="changeDate">2024-01-15</div>
         <div class="changeType">Feature</div>
-        <div class="changeTitle">New Search API</div>
+        <h2 class="changeTitle">New Search API</h2>
         <div class="changeText">Improved search ranking and speed.</div>
-      </div>
+      </section>
     `;
 
     const originalFetch = globalThis.fetch;
@@ -186,12 +186,13 @@ describe("social scrapers unit tests", () => {
     globalThis.fetch = async () => new Response(commentHtml, { status: 200 });
 
     try {
-      const comments = await scrapeCommentsPage("/album/1-album/comments/");
+      const { comments, moreDiscussion } = await scrapeCommentsPage("/album/1-album/comments/");
       expect(comments.length).toBe(1);
       expect(comments[0].id).toBe(123);
       expect(comments[0].username).toBe("commenter");
       expect(comments[0].text).toBe("Awesome release!");
       expect(comments[0].replies).toBe(2);
+      expect(moreDiscussion).toEqual([]);
 
       const repliesRes = await scrapeAlbumCommentReplies("1", "123");
       expect(repliesRes.albumId).toBe(1);
@@ -409,10 +410,12 @@ describe("social scrapers unit tests", () => {
       let count = 0;
         globalThis.fetch = async () => {
         count++;
-        if (count === 1) return new Response("<h1>News</h1>", { status: 200 });
-        return new Response("Error", { status: 500 });
+        return new Response('<h1 class="headline"><a href="https://example.com/x">News</a></h1>', { status: 200 });
       };
-      expect(scrapeNewsDetail("1-news")).rejects.toThrow("News item fetch failed");
+      const newsOnce = await scrapeNewsDetail("1-news");
+      expect(newsOnce.title).toBe("News");
+      // Single upstream fetch now (was three parallel fetches before).
+      expect(count).toBe(1);
     } finally {
       globalThis.fetch = originalFetch;
     }

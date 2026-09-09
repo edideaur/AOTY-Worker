@@ -12,12 +12,15 @@ export interface AlbumBlock {
   userScore: number | null;
   userCount: number | null;
   mustHear: boolean;
+  mustHearScope: "both" | "user" | "critic" | null;
+  locked: boolean;
 }
 
 export interface Track {
   number: number;
   title: string;
   url: string;
+  songId: number | null;
   length: string;
   rating: number | null;
   ratingCount: number | null;
@@ -27,12 +30,16 @@ export interface Track {
 }
 
 export interface CriticReview {
+  id: number | null;
   score: number | null;
   publication: string;
+  publicationUrl: string | null;
   author: string;
+  criticUrl: string | null;
   text: string;
   image: string;
   url: string;
+  isPrintOnly: boolean;
   date: string;
 }
 
@@ -136,6 +143,12 @@ export interface AlbumRankingInfo {
   url: string;
 }
 
+export interface AlbumAllTimeRanking {
+  rank: number;
+  total: number | null;
+  url: string;
+}
+
 export interface AlbumDetail {
   url: string;
   id: number | null;
@@ -152,19 +165,27 @@ export interface AlbumDetail {
   labelUrl: string | null;
   labels: NamedLink[];
   genres: string[];
+  genreLinks: NamedLink[];
   secondaryGenres?: string[];
   tags: string[];
   vibes: string[];
   producers: ArtistLink[];
-  writers: ArtistLink[];  totalLength: string | null;
+  writers: ArtistLink[];
+  producersMore: number;
+  writersMore: number;
+  totalLength: string | null;
+  mustHear: boolean;
+  commentCount: number | null;
   criticScore: number | null;
   criticScoreExact: number | null;
   criticCount: number | null;
   criticRanking?: AlbumRankingInfo | null;
+  criticRankingAllTime?: AlbumAllTimeRanking | null;
   userScore: number | null;
   userScoreExact: number | null;
   userCount: number | null;
   userRanking?: AlbumRankingInfo | null;
+  userRankingAllTime?: AlbumAllTimeRanking | null;
   tracklist: Track[];
   streamingLinks: StreamingLink[];
   reviews: CriticReview[];
@@ -188,6 +209,8 @@ export interface NewsItem {
   source: string;
   sourceUrl: string;
   date: string;
+  submittedBy: string | null;
+  submittedByUrl: string | null;
   likes: number;
   comments: number;
 }
@@ -199,8 +222,13 @@ export interface ListEntry {
   cover: string | null;
 }
 
+export interface ListIndexSection {
+  title: string;
+  lists: ListEntry[];
+}
+
 export interface ListDetailItem {
-  rank: number;
+  rank: number | null;
   artist: string;
   album: string;
   title: string;
@@ -208,9 +236,13 @@ export interface ListDetailItem {
   cover: string;
   date: string;
   genres: string[];
+  secondaryGenres: string[];
   score: number | null;
   scoreExact: number | null;
   ratingCount: number | null;
+  mustHear: boolean;
+  mustHearScope: "both" | "user" | "critic" | null;
+  streamingLinks: StreamingLink[];
   blurb: string | null;
   otherLists: number | null;
 }
@@ -246,8 +278,15 @@ export interface DiscographySection {
 
 export interface ArtistDetail {
   url: string;
+  id: number | null;
+  canonicalUrl: string | null;
   name: string;
   image: string | null;
+  imageFull: string | null;
+  sameAs: string | null;
+  notableAlbums: string[];
+  topSongsUrl: string | null;
+  similarArtistsUrl: string | null;
   criticScore: number | null;
   criticCount: number | null;
   userScore: number | null;
@@ -274,7 +313,14 @@ export interface LabelDetail {
   website: string | null;
   parentLabel: NamedLink | null;
   description: string | null;
+  genres: string[];
+  alsoKnownAs: string[];
+  country: string | null;
+  countryCode: string | null;
   page: number;
+  totalPages: number | null;
+  sort: string | null;
+  releaseType: string;
   albums: AlbumBlock[];
 }
 
@@ -293,6 +339,15 @@ export interface GenreDetail {
   sections: GenreSection[];
   items: ChartItem[];
   childGenres: NamedLink[];
+  releasesByYear: GenreReleasesByYear[];
+  totalReleases: number | null;
+  tabs: PageTab[];
+}
+
+export interface GenreReleasesByYear {
+  year: number;
+  count: number;
+  url: string;
 }
 
 export interface ChartItem {
@@ -304,10 +359,13 @@ export interface ChartItem {
   cover: string | null;
   date: string | null;
   genres: string[];
+  secondaryGenres: string[];
   score: number | null;
   scoreExact: number | null;
   ratingCount: number | null;
   mustHear: boolean;
+  mustHearScope: "both" | "user" | "critic" | null;
+  streamingLinks: StreamingLink[];
 }
 
 export interface GenreIndexItem {
@@ -321,7 +379,16 @@ export interface TagResults {
   type: string;
   year: number | null;
   page: number;
+  headline: string | null;
+  usedBy: number | null;
+  useCount: number | null;
+  tabs: PageTab[];
+  sort: string | null;
+  hasNextPage: boolean;
+  totalPages: number | null;
+  popularTags: NamedLink[];
   albums: AlbumBlock[];
+  artists: SearchArtist[];
   media: NewsItem[];
 }
 
@@ -347,6 +414,15 @@ export interface PublicationDetail {
   ratingDistribution: { range: string; count: number }[];
   recentReviews: PublicationReview[];
   topAlbums: PublicationReview[];
+  highest2026: PublicationReview[];
+  highestAllTime: PublicationReview[];
+  tabs: PageTab[];
+}
+
+export interface PageTab {
+  label: string;
+  url: string | null;
+  selected: boolean;
 }
 
 export interface CriticReviewEntry {
@@ -360,7 +436,9 @@ export interface CriticReviewEntry {
   text: string;
   publication: string;
   publicationUrl: string;
+  reviewUrl: string | null;
   date: string | null;
+  dateExact: string | null;
 }
 
 export interface CriticDetail {
@@ -370,7 +448,27 @@ export interface CriticDetail {
   publication: string | null;
   publicationUrl: string | null;
   page: number;
+  totalPages: number | null;
   reviews: CriticReviewEntry[];
+}
+
+export interface TopArtistEntry {
+  url: string;
+  name: string;
+  image: string | null;
+  score: number | null;
+}
+
+export interface DiscussionEntry {
+  artist: string;
+  album: string;
+  albumUrl: string;
+  cover: string | null;
+  commentCount: number;
+  lastUser: string;
+  lastUserUrl: string;
+  lastPostAgo: string | null;
+  lastPostExact: string | null;
 }
 
 export interface SongCredit {
@@ -380,8 +478,10 @@ export interface SongCredit {
 
 export interface SongRating {
   username: string;
+  displayName: string;
   userUrl: string;
   avatar: string | null;
+  subscriber: boolean;
   rating: number | null;
   date: string | null;
 }
@@ -392,6 +492,25 @@ export interface SongTracklistItem {
   url: string;
   length: string;
   score: number | null;
+  ratingCount: number | null;
+}
+
+export interface ArtistTopSong {
+  title: string;
+  url: string;
+  album: string | null;
+  cover: string | null;
+  score: number | null;
+  ratingCount: number | null;
+}
+
+export interface HomepageSong {
+  title: string;
+  url: string;
+  artist: string;
+  cover: string | null;
+  score: number | null;
+  ratingCount: number | null;
 }
 
 export interface SongDetail {
@@ -414,6 +533,8 @@ export interface SongDetail {
   likePercentage?: number | null;
   dislikePercentage?: number | null;
   tracklist?: SongTracklistItem[];
+  tracklistTotalLength: string | null;
+  artistTopSongs: ArtistTopSong[];
   tags: NamedLink[];
   credits: SongCredit[];
   topRatings: SongRating[];
@@ -427,10 +548,12 @@ export interface TopSong {
   artist: string;
   artistUrl: string;
   artistImage: string | null;
+  artists: ArtistLink[];
   album: string | null;
   albumUrl: string | null;
   cover: string | null;
   score: number | null;
+  exactScore: number | null;
   ratingCount: number | null;
 }
 
@@ -447,10 +570,18 @@ export interface UserProfile {
   subscriber: boolean;
   ratingDistribution: Array<{ label: string; count: number }>;
   favorites: AlbumBlock[];
+  favoriteArtists: SearchArtist[];
   pinnedReview?: UserReview | null;
+  recentlyRated: UserRating[];
+  bestOfYear: UserBestOfYear | null;
+  recentReviews: UserReview[];
+  recentLists: UserListEntry[];
+  tagsPreview: string[];
+  followingPreview: SearchArtist[];
   yearEndLists?: number[];
   stats: {
     ratings: number;
+    listens: number;
     reviews: number;
     lists: number;
     followers: number;
@@ -458,13 +589,38 @@ export interface UserProfile {
   };
 }
 
+export interface FollowUser {
+  url: string;
+  name: string;
+  username: string;
+  image: string | null;
+  subscriber: boolean;
+}
+
+export interface FollowArtist {
+  url: string;
+  name: string;
+  image: string | null;
+  hasImage: boolean;
+  followers: number | null;
+}
+
+export interface UserBestOfYear {
+  year: number | null;
+  ratings: UserRating[];
+}
+
 export interface UserRating extends AlbumBlock {
   userRating: number | null;
   ratedDate: string | null;
   reviewUrl: string | null;
+  liked: boolean;
+  albumId: number | null;
+  hasTrackRatings: boolean;
 }
 
 export interface UserReview {
+  reviewId: number | null;
   url: string;
   artist: string;
   artistUrl: string;
@@ -475,11 +631,16 @@ export interface UserReview {
   username: string;
   userUrl: string;
   avatar: string | null;
+  subscriber: boolean;
   rating: number | null;
   text: string;
+  isTruncated: boolean;
   likes: number;
   comments: number;
+  commentsUrl: string | null;
   date: string | null;
+  dateExact: string | null;
+  edited: boolean;
 }
 
 export interface UserReviewDetail extends UserReview {
@@ -489,13 +650,18 @@ export interface UserReviewDetail extends UserReview {
   streamingLinks?: StreamingLink[];
   previousReview?: { title: string; url: string; cover: string | null } | null;
   nextReview?: { title: string; url: string; cover: string | null } | null;
+  datePublished: string | null;
+  dateModified: string | null;
+  relatedLinks: NamedLink[];
 }
 
 export interface AotyComment {
   id: number;
   username: string;
+  usernameColor: string | null;
   userUrl: string;
   avatar: string | null;
+  subscriber: boolean;
   date: string;
   dateExact: string;
   text: string;
@@ -512,6 +678,9 @@ export interface UserListEntry {
   description: string | null;
   likes: number | null;
   comments: number | null;
+  updatedAgo: string | null;
+  albumCount: number | null;
+  ranked: boolean;
 }
 
 export interface UserListDetailItem {
@@ -523,6 +692,8 @@ export interface UserListDetailItem {
   url: string;
   cover: string | null;
   year: number | null;
+  blurb: string | null;
+  creatorRating: number | null;
 }
 
 export interface TrackRating {
@@ -537,6 +708,12 @@ export interface UserListDetail {
   title: string;
   username: string | null;
   description: string | null;
+  likes: number;
+  likers: SearchArtist[];
+  updatedAgo: string | null;
+  authorAvatar: string | null;
+  listId: number | null;
+  gridUrl: string | null;
   items: UserListDetailItem[];
   comments: AotyComment[];
 }
@@ -557,6 +734,7 @@ export interface PerfectSection {
 
 export interface ArtistsOverviewSection {
   title: string;
+  url: string | null;
   artists: SearchArtist[];
 }
 
@@ -570,11 +748,14 @@ export interface ChangelogEntry {
   type: string;
   title: string;
   text: string;
+  links: NamedLink[];
 }
 
 export interface SingleStat {
   name: string;
   value: number;
+  key: string | null;
+  timestamp: string | null;
 }
 
 export interface LeaderboardItem {
@@ -623,6 +804,10 @@ export interface NewsDetail {
   text: string;
   likes: number;
   embedUrl: string | null;
+  artist: NamedLink | null;
+  album: NamedLink | null;
+  label: string | null;
+  tags: NamedLink[];
   related: NamedLink[];
   streamingLinks: StreamingLink[];
   comments: AotyComment[];
@@ -635,6 +820,10 @@ export interface SiteUpdate {
   artist: string | null;
   artistUrl: string | null;
   image: string | null;
+  publication: string | null;
+  publicationLogo: string | null;
+  excerpt: string | null;
+  sourceUrl: string | null;
   meta: string | null;
   timeAgo: string | null;
 }
@@ -708,6 +897,16 @@ export interface YearEndAggregateItem {
   cover: string | null;
   points: number;
   breakdown: YearEndAggregateBreakdown;
+  breakdownUrls: {
+    firstPlace: string | null;
+    secondPlace: string | null;
+    thirdPlace: string | null;
+    top10: string | null;
+    top25: string | null;
+    other: string | null;
+    all: string | null;
+  };
+  criticListsUrl: string | null;
   streamingLinks: StreamingLink[];
 }
 
@@ -793,9 +992,20 @@ export interface AlbumUserReviewsResult {
   type: string;
   page: number;
   totalRatings?: number | null;
+  totalPages: number | null;
+  commentCount: number | null;
   likePercentage?: number | null;
   dislikePercentage?: number | null;
   distribution?: AlbumDistributionRow[];
+  header: {
+    cover: string | null;
+    artist: string;
+    artistUrl: string;
+    album: string;
+    albumUrl: string;
+    userScore: number | null;
+    userScoreCount: number | null;
+  } | null;
   reviews: UserReview[];
 }
 
@@ -893,6 +1103,72 @@ export interface EntityCorrectionsResult {
   locked: boolean;
   changeLog: CorrectionChangeLogEntry[];
   corrections: CorrectionItem[];
+}
+
+export interface AlbumSummary {
+  url: string;
+  id: number | null;
+  title: string;
+  artist: string;
+  artistUrl: string;
+  cover: string;
+  datePublished: string;
+  format: string;
+  label: string | null;
+  labelUrl: string | null;
+  labels: NamedLink[];
+  genres: string[];
+  genreLinks: NamedLink[];
+  secondaryGenres: string[];
+  tags: string[];
+  vibes: string[];
+  totalLength: string | null;
+  trackCount: number;
+  mustHear: boolean;
+  commentCount: number | null;
+  criticScore: number | null;
+  criticScoreExact: number | null;
+  criticCount: number | null;
+  criticRanking: AlbumRankingInfo | null;
+  criticRankingAllTime: AlbumAllTimeRanking | null;
+  userScore: number | null;
+  userScoreExact: number | null;
+  userCount: number | null;
+  userRanking: AlbumRankingInfo | null;
+  userRankingAllTime: AlbumAllTimeRanking | null;
+  streamingLinks: StreamingLink[];
+  stats: AlbumStats | null;
+}
+
+export interface BatchItemResult {
+  path: string;
+  status: number;
+  data: unknown;
+  error?: string | null;
+}
+
+export interface BatchResult {
+  count: number;
+  results: BatchItemResult[];
+}
+
+export interface StatusResult {
+  name: string;
+  version: string;
+  openapi: string;
+  endpoints: number;
+  timestamp: string;
+}
+
+export interface SongCriticListItem {
+  rank: number | null;
+  publication: string;
+  url: string;
+}
+
+export interface SongCriticListsResult {
+  slug: string;
+  lists: SongCriticListItem[];
 }
 
 export interface RatingSourceItem {

@@ -428,6 +428,14 @@ export function parseCount(raw: unknown): number | null {
   const s = String(raw).trim();
   if (!s || /^(nr|n\/a|na|—|–|-)$/i.test(s)) return null;
   const cleaned = s.replace(/,/g, "");
+  // Compact suffixes as rendered by AOTY ("11.1K", "(40.5K)", "2.3M"): scale up.
+  const compact = cleaned.match(/^[^0-9-]*(-?\d+(?:\.\d+)?)\s*([kmb])\b/i);
+  if (compact?.[1] && compact[2]) {
+    const n = Number(compact[1]);
+    if (!Number.isFinite(n)) return null;
+    const mult = compact[2].toLowerCase() === "k" ? 1_000 : compact[2].toLowerCase() === "m" ? 1_000_000 : 1_000_000_000;
+    return Math.trunc(n * mult);
+  }
   const m = cleaned.match(/-?\d+(\.\d+)?/);
   if (!m?.[0]) return null;
   const n = Number(m[0]);

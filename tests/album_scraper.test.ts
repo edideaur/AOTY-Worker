@@ -579,3 +579,120 @@ describe("scrapeAlbumTags & scrapeAlbumCriticReviews unit test", () => {
   });
 });
 
+
+describe("scrapeAlbumPage extended metadata", () => {
+  it("extracts all-time rankings, must-hear, hidden credit counts, genre links, bottom tags, comment count, song IDs and review metadata", async () => {
+    const html = `
+      <script type="application/ld+json">
+      {
+        "name": "Aquemini",
+        "byArtist": { "name": "OutKast", "url": "https://www.albumoftheyear.org/artist/562-outkast/" },
+        "image": "https://cdn.albumoftheyear.org/album/2915.jpg",
+        "datePublished": "1998-09-29",
+        "genre": ["Hip Hop"]
+      }
+      </script>
+      <button class="showImage" data-id="2915"></button>
+      <div class="mustHearButton user" title="User Must Hear"><a href="/must-hear/">Must Hear Album</a></div>
+      <div class="albumCriticScore"><a title="92">92</a></div>
+      <div class="albumCriticScoreBox"><div class="text numReviews">20 reviews</div><div class="text gray">1998 Ratings: <strong><a href="/ratings/6-highest-rated/1998/1#rank-2">#2</a></strong> / 50<span style="padding-left: 5px;">All Time: <strong><a href="/ratings/6-highest-rated/all/8#rank-178">#178</a></strong></span></div></div>
+      <div class="albumUserScore"><a title="95">95</a></div>
+      <div class="albumUserScoreBox"><div class="text numReviews">11,326 ratings</div><div class="text gray">1998 Ratings: <strong><a href="/ratings/user-highest-rated/1998/#rank-2">#2</a></strong><span style="padding-left: 5px;">All Time: <strong><a href="/ratings/user-highest-rated/all/2/#rank-46">#46</a></strong></span></div></div>
+      <div class="albumTopBox info">
+        <div class="detailRow">Release Date</div><div class="detailRow">LP</div>
+        <div class="detailRow"><a href="/label/1-laface/">LaFace</a></div>
+        <div class="detailRow"><a href="/genre/391-southern-hip-hop/">Southern Hip Hop</a>, <a href="/genre/317-conscious-hip-hop/">Conscious Hip Hop</a><br /><a href="/genre/131-neo-soul/"><div class="secondary">Neo-Soul</div></a></div>
+        <div class="detailRow"><span class="actionBlank showAlbumCredits" data-type="2">Producer</span>: <a href="/artist/562-outkast/">OutKast</a> <span class="action showAlbumCredits" data-album-id="2915" data-type="2">+11&nbsp;more...</span></div>
+        <div class="detailRow"><span class="actionBlank showAlbumCredits" data-type="6">Writer</span>: <a href="/artist/1-andre-3000/">Andr&eacute; 3000</a> <span class="action showAlbumCredits" data-album-id="2915" data-type="6">+17&nbsp;more...</span></div>
+      </div>
+      <table class="trackListTable">
+        <tr>
+          <td class="trackNumber">1</td>
+          <td class="trackTitle"><a href="/song/15318-hold-on-be-strong/">Hold On, Be Strong</a><span class="length">4:40</span></td>
+          <td class="trackRating"><span title="500 ratings">95</span></td>
+        </tr>
+      </table>
+      <div class="albumReviewRow first" id="review_12890">
+        <div class="albumReviewImage"><a href="/publication/8-all-music/"><img src="https://cdn.aoty.org/pub.jpg" /></a></div>
+        <div class="albumReviewHeader">
+          <div class="publication"><a href="/publication/8-all-music/">AllMusic</a></div>
+          <div class="author"><a class="gray" href="/critic/512-steve-huey/">Steve Huey</a></div>
+          <div class="date">Sep 29, 1998</div>
+        </div>
+        <div class="albumReviewRating">90</div>
+        <div class="albumReviewText">A masterpiece.</div>
+        <div class="albumReviewLinks">
+          <div class="extLink"><a href="https://allmusic.com/review/1">Full Review</a></div>
+          <div class="actionContainer" title="action1"></div>
+          <div class="actionContainer" title="1998-09-29"></div>
+        </div>
+      </div>
+      <div class="albumReviewRow" id="review_12891">
+        <div class="albumReviewHeader">
+          <div class="publication"><a href="/publication/9-rolling-stone/">Rolling Stone</a></div>
+          <div class="author"><a class="gray" href="/critic/513-critic/">Some Critic</a></div>
+        </div>
+        <div class="albumReviewRating">80</div>
+        <div class="albumReviewText">Great.</div>
+        <div class="albumReviewLinks">
+          <div class="extLink">Print Only</div>
+          <div class="actionContainer" title="action1"></div>
+          <div class="actionContainer" title="1998-10-01"></div>
+        </div>
+      </div>
+      <div class="section"><div class="sectionHeading">Tags</div><div class="tag strong"><a href="/tag/southern+hip+hop/albums/">southern hip hop</a></div><div class="tag strong bold"><a href="/tag/lush/albums/">lush</a></div></div>
+      <div class="rightBox">
+        <div class="sectionHeading">Year End Lists</div>
+        <TABLE class="listTable">
+          <tr>
+            <td class="rank">#<strong>2</strong></td>
+            <td class="divider">/</td>
+            <td><a href="/list/100-pitchfork-top-50-albums-of-1998.php">Pitchfork - Top 50 Albums of 1998</a></td>
+          </tr>
+          <tr>
+            <td class="rank"></td>
+            <td class="divider">/</td>
+            <td><a href="/list/1193-gothamist-best-albums-of-1998/">Gothamist</a></td>
+          </tr>
+        </TABLE>
+      </div>
+      <div class="selectRow"><div class="selectBox">Overview</div><div class="selectBox">Comments (192)</div></div>
+    `;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(html, { status: 200 });
+
+    try {
+      const album = await scrapeAlbumPage("https://www.albumoftheyear.org/album/2915-outkast-aquemini/");
+      expect(album.mustHear).toBe(true);
+      expect(album.criticRankingAllTime?.rank).toBe(178);
+      expect(album.criticRankingAllTime?.url).toBe("https://www.albumoftheyear.org/ratings/6-highest-rated/all/8#rank-178");
+      expect(album.userRankingAllTime?.rank).toBe(46);
+      expect(album.producersMore).toBe(11);
+      expect(album.writersMore).toBe(17);
+      expect(album.genreLinks).toEqual([
+        { name: "Southern Hip Hop", url: "https://www.albumoftheyear.org/genre/391-southern-hip-hop/" },
+        { name: "Conscious Hip Hop", url: "https://www.albumoftheyear.org/genre/317-conscious-hip-hop/" },
+        { name: "Neo-Soul", url: "https://www.albumoftheyear.org/genre/131-neo-soul/" },
+      ]);
+      expect(album.tags).toEqual(["southern hip hop", "lush"]);
+      expect(album.commentCount).toBe(192);
+      expect(album.tracklist[0]?.songId).toBe(15318);
+      expect(album.yearEndLists.length).toBe(2);
+      expect(album.yearEndLists[0]?.rank).toBe(2);
+      expect(album.yearEndLists[1]?.rank).toBeNull();
+      expect(album.yearEndLists[1]?.publication).toBe("Gothamist");
+      expect(album.reviews.length).toBe(2);
+      expect(album.reviews[0]?.id).toBe(12890);
+      expect(album.reviews[0]?.publicationUrl).toBe("https://www.albumoftheyear.org/publication/8-all-music/");
+      expect(album.reviews[0]?.criticUrl).toBe("https://www.albumoftheyear.org/critic/512-steve-huey/");
+      expect(album.reviews[0]?.isPrintOnly).toBe(false);
+      expect(album.reviews[0]?.url).toBe("https://allmusic.com/review/1");
+      expect(album.reviews[1]?.id).toBe(12891);
+      expect(album.reviews[1]?.isPrintOnly).toBe(true);
+      expect(album.reviews[1]?.url).toBe("");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

@@ -2,6 +2,7 @@ import { BASE, FETCH_OPTS, cleanImageUrl, decodeEntities, parseCount, parseScore
 import type {
   ListDetailItem,
   ListEntry,
+  ListIndexSection,
   ListSummaryResult,
   CommunityYearEndResult,
   YearEndAggregateItem,
@@ -9,17 +10,27 @@ import type {
   StreamingLink,
 } from "../types.js";
 
-export async function scrapeListsIndex(url: string, opts: FetchOpts = FETCH_OPTS): Promise<ListEntry[]> {
+export async function scrapeListsIndex(url: string, opts: FetchOpts = FETCH_OPTS): Promise<{ lists: ListEntry[]; sections: ListIndexSection[] }> {
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`Lists fetch failed: ${res.status}`);
 
-  const entries: ListEntry[] = [];
-  let current: ListEntry | null = null;
+  const entries: Array<ListEntry & { section: string }> = [];
+  let current: (ListEntry & { section: string }) | null = null;
+  let sectionTitle = "";
 
   await new HTMLRewriter()
+    .on("h2.subHeadline, h2.sectionHeading, .sectionHeading h2", {
+      element() {
+        sectionTitle = "";
+      },
+      text(t) {
+        const v = t.text.trim();
+        if (v) sectionTitle = (sectionTitle ? `${sectionTitle} ` : "") + v;
+      },
+    })
     .on(".listColumn .listPub", {
       element() {
-        current = { url: "", title: "", publication: "", cover: null };
+        current = { url: "", title: "", publication: "", cover: null, section: sectionTitle.trim() };
         entries.push(current);
       },
     })
@@ -45,13 +56,33 @@ export async function scrapeListsIndex(url: string, opts: FetchOpts = FETCH_OPTS
     .transform(res)
     .arrayBuffer();
 
-  return entries.map((e) => ({
-    ...e,
+  const lists = entries.map((e) => ({
+    url: e.url ?? "",
     title: decodeEntities((e.title ?? "").trim()),
     publication: decodeEntities((e.publication ?? "").trim()),
     cover: cleanImageUrl(e.cover ?? null),
   }));
+  // Group entries under their headings (e.g. Featured vs Other); drop empties.
+  const bySection = new Map<string, ListEntry[]>();
+  for (const e of entries) {
+    const title = (e.section ?? "").trim();
+    if (!title) continue;
+    const group = bySection.get(title) ?? [];
+    group.push({
+      url: e.url ?? "",
+      title: decodeEntities((e.title ?? "").trim()),
+      publication: decodeEntities((e.publication ?? "").trim()),
+      cover: cleanImageUrl(e.cover ?? null),
+    });
+    bySection.set(title, group);
+  }
+  return {
+    lists,
+    sections: [...bySection].map(([title, sectionLists]) => ({ title, lists: sectionLists })),
+  };
 }
+
+import { mustHearScopeFromClass } from "./albumBlock.js";
 
 type RawListDetailItem = {
   rank: string;
@@ -60,9 +91,13 @@ type RawListDetailItem = {
   cover: string;
   date: string;
   genres: string[];
+  secondaryGenres: string[];
   score: string | null;
   scoreExact: string | null;
   ratingCount: string | null;
+  mustHear: boolean;
+  mustHearScope: "both" | "user" | "critic" | null;
+  streamingLinks: StreamingLink[];
   blurb: string | null;
   otherLists: number | null;
 };
@@ -75,6 +110,7 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
   let sourceUrl = "";
   const items: RawListDetailItem[] = [];
   let current: RawListDetailItem | null = null;
+  let inSecondary = false;
 
   await new HTMLRewriter()
     .on(".listHeader h1.headline", {
@@ -92,17 +128,40 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
           cover: "",
           date: "",
           genres: [],
+          secondaryGenres: [],
           score: null,
           scoreExact: null,
           ratingCount: null,
+          mustHear: false,
+          mustHearScope: null,
+          streamingLinks: [],
           blurb: null,
           otherLists: null,
         };
         items.push(current);
+        inSecondary = false;
       },
     })
     .on(".albumListRank span[itemprop='position']", {
       text(t) { if (current) current.rank += t.text; },
+    })
+    .on(".albumListRow .mustHear", {
+      element() {
+        if (current) {
+          current.mustHear = true;
+          if (current.mustHearScope === null) current.mustHearScope = "critic";
+        }
+      },
+    })
+    .on(".albumListRow .albumListCover", {
+      element(el) {
+        if (!current) return;
+        const scope = mustHearScopeFromClass(el.getAttribute("class"));
+        if (scope) {
+          current.mustHear = true;
+          current.mustHearScope = scope;
+        }
+      },
     })
     .on(".albumListTitle a[itemprop='url']", {
       element(el) {
@@ -130,7 +189,32 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
     .on(".albumListGenre a[href*='/genre/']", {
       text(t) {
         const name = t.text.trim();
-        if (current && name) current.genres?.push(name);
+        if (current && name) {
+          if (inSecondary) current.secondaryGenres?.push(name);
+          else current.genres?.push(name);
+        }
+      },
+    })
+    .on(".albumListGenre .secondary-genres", {
+      element() {
+        inSecondary = true;
+      },
+    })
+    .on(".albumListRow .albumListLinks a", {
+      element(el) {
+        if (!current) return;
+        const href = el.getAttribute("href") ?? "";
+        if (!href.startsWith("http")) return;
+        const platform = (el.getAttribute("data-track-action") ?? "").trim();
+        current.streamingLinks.push({ platform, url: href });
+      },
+      text(t) {
+        if (!current) return;
+        const last = current.streamingLinks[current.streamingLinks.length - 1];
+        if (last && !last.platform) {
+          const v = t.text.trim();
+          if (v) last.platform = v;
+        }
       },
     })
     .on(".albumListScoreContainer .scoreValue", {
@@ -164,18 +248,27 @@ export async function scrapeListDetail(url: string, opts: FetchOpts = FETCH_OPTS
       const dashIdx = rawTitle.indexOf(" - ");
       const artist = dashIdx > -1 ? rawTitle.slice(0, dashIdx).trim() : "";
       const album = dashIdx > -1 ? rawTitle.slice(dashIdx + 3).trim() : rawTitle;
+      const hasRank = (item.rank ?? "").trim().length > 0;
+      const cleanGenres = [...new Set((item.genres ?? []).map((g) => g.trim()).filter(Boolean))];
+      const cleanSecondary = [...new Set((item.secondaryGenres ?? []).map((g) => decodeEntities(g.trim())).filter(Boolean))].filter((g) => !cleanGenres.includes(g));
       return {
-        rank: parseRank((item.rank ?? "").trim()) ?? idx + 1,
+        // Unranked publication orderings carry no position node: keep rank null
+        // instead of inventing one from the row index.
+        rank: hasRank ? (parseRank((item.rank ?? "").trim()) ?? idx + 1) : null,
         artist,
         album,
         title: rawTitle,
         url: item.url ?? "",
         cover: cleanImageUrl(item.cover ?? ""),
         date: (item.date ?? "").trim(),
-        genres: [...new Set((item.genres ?? []).map((g) => g.trim()).filter(Boolean))],
+        genres: cleanGenres,
+        secondaryGenres: cleanSecondary,
         score: parseScore((item.score ?? "").trim()),
         scoreExact: parseExactScore(item.scoreExact),
         ratingCount: parseCount((item.ratingCount ?? "").replace(/reviews?|ratings?/gi, "").trim()),
+        mustHear: item.mustHear ?? false,
+        mustHearScope: item.mustHearScope ?? null,
+        streamingLinks: (item.streamingLinks ?? []).map((l) => ({ platform: decodeEntities(l.platform || "Link"), url: l.url })),
         blurb: item.blurb ? decodeEntities(item.blurb.trim()) : null,
         otherLists: item.otherLists ?? null,
       };
@@ -240,6 +333,38 @@ export function parseListSummaryRows(html: string): { totalLists: number | null;
       }
     }
 
+    // Drill-down links: points total + per-placement breakdown (critic-lists/?f=).
+    let criticListsUrl: string | null = null;
+    const breakdownUrls: { firstPlace: string | null; secondPlace: string | null; thirdPlace: string | null; top10: string | null; top25: string | null; other: string | null; all: string | null } = {
+      firstPlace: null,
+      secondPlace: null,
+      thirdPlace: null,
+      top10: null,
+      top25: null,
+      other: null,
+      all: null,
+    };
+    for (const m of r.matchAll(/<a[^>]*href="([^"]*\/critic-lists\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/g)) {
+      const href = m[1] ?? "";
+      const inner = m[2] ?? "";
+      if (!href) continue;
+      const abs = href.startsWith("http") ? href : BASE + href;
+      const innerText = inner.replace(/<[^>]+>/g, " ").trim();
+      if (/Points/i.test(innerText)) {
+        criticListsUrl = abs;
+        if (/[?&]f=all\b/.test(href)) breakdownUrls.all = abs;
+        continue;
+      }
+      const headM = inner.match(/<div class="head">([^<]*)<\/div>/);
+      const head = (headM?.[1] ?? "").trim();
+      if (/^1st Place$/i.test(head)) breakdownUrls.firstPlace = abs;
+      else if (/^2nd Place$/i.test(head)) breakdownUrls.secondPlace = abs;
+      else if (/^3rd Place$/i.test(head)) breakdownUrls.thirdPlace = abs;
+      else if (/^Top 10$/i.test(head)) breakdownUrls.top10 = abs;
+      else if (/^Top 25$/i.test(head)) breakdownUrls.top25 = abs;
+      else if (/^Other$/i.test(head)) breakdownUrls.other = abs;
+    }
+
     if (album || artist) {
       items.push({
         rank,
@@ -251,6 +376,8 @@ export function parseListSummaryRows(html: string): { totalLists: number | null;
         cover: cleanImageUrl(cover),
         points,
         breakdown,
+        breakdownUrls,
+        criticListsUrl,
         streamingLinks,
       });
     }

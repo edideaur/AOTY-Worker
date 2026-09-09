@@ -11,9 +11,11 @@ type RawUserListEntry = {
   description: string | null;
   likes: string | null;
   comments: string | null;
+  listInfo: string;
 };
 
 export async function scrapeUserListRows(res: Response): Promise<UserListEntry[]> {
+  const html = await res.text();
   const lists: RawUserListEntry[] = [];
   let cur: RawUserListEntry | null = null;
   let inTitle = false;
@@ -21,7 +23,7 @@ export async function scrapeUserListRows(res: Response): Promise<UserListEntry[]
   await new HTMLRewriter()
     .on(".userListRow", {
       element() {
-        cur = { url: "", title: "", username: "", userUrl: "", avatar: null, covers: [], description: null, likes: null, comments: null };
+        cur = { url: "", title: "", username: "", userUrl: "", avatar: null, covers: [], description: null, likes: null, comments: null, listInfo: "" };
         lists.push(cur);
         inTitle = false;
         inUser = false;
@@ -77,9 +79,36 @@ export async function scrapeUserListRows(res: Response): Promise<UserListEntry[]
         if (cur) cur.comments = (cur.comments ?? "") + t.text;
       },
     })
-    .transform(res)
+    .on(".userListRow .listInfo", {
+      text(t) {
+        if (cur) cur.listInfo = (cur.listInfo ?? "") + t.text;
+      },
+    })
+    .transform(new Response(html))
     .arrayBuffer();
-  return lists.map((l) => ({
+  // Bare counts in .listInfo (no .like_count/.comment_count wrappers on some rows):
+  // `<a href="...#comments"><i ...comment...></i> N</a>...</div><i ...heart...></i> M`.
+  // Zipped by row order; applied only when the class-based value is missing.
+  const rowChunks = html.split('<div class="userListRow');
+  const zipped = rowChunks.length - 1 === lists.length
+    ? rowChunks.slice(1).map((chunk) => {
+      const cM = chunk.match(/#comments[^>]*>[\s\S]{0,300}?(\d+)\s*<\/a>/);
+      const lM = chunk.match(/fa-heart[^>]*>(?:\s*<\/i>)?\s*(\d+)/);
+      return {
+        comments: cM?.[1] ? parseInt(cM[1].replace(/,/g, ""), 10) : null,
+        likes: lM?.[1] ? parseInt(lM[1].replace(/,/g, ""), 10) : null,
+      };
+    })
+    : [];
+  return lists.map((l, idx) => {
+    // listInfo looks like "Updated 1w ago22 albumsRanked" (profile + community rows).
+    const info = decodeEntities((l.listInfo ?? "").replace(/\s+/g, " ").trim());
+    const updatedM = info.match(/Updated\s+(.+?)\s*\d+\s*albums/i) ?? info.match(/Updated\s+(.+)/i);
+    const countM = info.match(/(\d[\d,]*)\s*albums/i);
+    const zip = zipped[idx];
+    const likesRaw = (l.likes ?? "").trim();
+    const commentsRaw = (l.comments ?? "").trim();
+    return {
     url: l.url ?? "",
     title: decodeEntities((l.title ?? "").trim()),
     username: decodeEntities((l.username ?? "").trim()),
@@ -87,7 +116,11 @@ export async function scrapeUserListRows(res: Response): Promise<UserListEntry[]
     avatar: cleanImageUrl(l.avatar ?? null),
     covers: (l.covers ?? []).map((c) => cleanImageUrl(c)),
     description: l.description ? decodeEntities((l.description as string).trim()) : null,
-    likes: parseCount((l.likes ?? "").trim()),
-    comments: parseCount((l.comments ?? "").trim()),
-  }));
+    likes: likesRaw ? parseCount(likesRaw) : (zip?.likes ?? null),
+    comments: commentsRaw ? parseCount(commentsRaw) : (zip?.comments ?? null),
+    updatedAgo: updatedM?.[1] ? updatedM[1].trim() : null,
+    albumCount: countM?.[1] ? parseInt(countM[1].replace(/,/g, ""), 10) : null,
+    ranked: /ranked/i.test(info),
+    };
+  });
 }

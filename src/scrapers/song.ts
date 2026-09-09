@@ -1,8 +1,10 @@
 import { BASE, FETCH_OPTS, cleanImageUrl, decodeEntities, parseCount, parseScore, parseExactScore, parseId, parseRank, parseTrackNumber, parseYear, parsePercent, type FetchOpts } from "../constants.js";
 import type {
+  ArtistTopSong,
   AotyComment,
   ArtistLink,
   NamedLink,
+  PageTab,
   SongCredit,
   SongDetail,
   SongRating,
@@ -162,6 +164,7 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
       const titleM = row.match(/<a href="([^"]*\/song\/[^"]*)">([^<]+)<\/a>/);
       const lenM = row.match(/class="[^"]*length[^"]*"[^>]*>([^<]+)<\/td>|<td[^>]*>(\d+:\d+)<\/td>/);
       const scoreM = row.match(/class="[^"]*trackRating[^"]*"[^>]*>([^<]+)<\/td>|<div class="trackRating[^"]*">([^<]+)<\/div>/);
+      const countM = row.match(/title="([\d,]+) Ratings?"/i);
       if (titleM?.[1] && titleM[2]) {
         tracklist.push({
           number: parseTrackNumber((numM?.[1] ?? numM?.[2] ?? "").trim()),
@@ -169,7 +172,44 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
           url: titleM[1].startsWith("http") ? titleM[1] : BASE + titleM[1],
           length: (lenM?.[1] ?? lenM?.[2] ?? "").trim(),
           score: parseScore((scoreM?.[1] ?? scoreM?.[2] ?? "").trim()),
+          ratingCount: countM?.[1] ? parseInt(countM[1].replace(/,/g, ""), 10) : null,
         });
+      }
+    }
+  }
+
+  const totalLengthM = html.match(/<div class="totalLength">([^<]*)<\/div>/i);
+  const tracklistTotalLength = totalLengthM?.[1]
+    ? decodeEntities(totalLengthM[1].replace(/^Total Length:\s*/i, "").trim()) || null
+    : null;
+
+  // "Community's Top Songs" by the same artist (table after the best-songs heading).
+  const artistTopSongs: ArtistTopSong[] = [];
+  const bestSongsIdx = html.indexOf("/best-songs/");
+  if (bestSongsIdx !== -1) {
+    const tableM = html.slice(bestSongsIdx).match(/<table class="trackListTable">([\s\S]*?)<\/table>/i);
+    const tableHtml = tableM?.[1] ?? tableM?.[0];
+    if (tableHtml) {
+      for (const tr of tableHtml.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
+        const row = tr[1];
+        if (!row) continue;
+        const coverM = row.match(/class="coverart"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i);
+        const songM = row.match(/class="songAlbum"[^>]*>[\s\S]*?<a href="([^"]*\/song\/[^"]*)">([^<]+)<\/a>/i);
+        const albumM = row.match(/<div class="gray-font">([^<]*)<\/div>/i);
+        const scoreTitleM = row.match(/class="trackRating[^"]*"[^>]*>[\s\S]*?<span[^>]*title="([\d,]+) Ratings?"[^>]*>([^<]*)<\/span>/i);
+        const scorePlainM = scoreTitleM ? null : row.match(/class="trackRating[^"]*"[^>]*>[\s\S]*?<span[^>]*>([^<]*)<\/span>/i);
+        if (songM?.[1] && songM[2]) {
+          const countRaw = scoreTitleM?.[1] ?? null;
+          const scoreRaw = scoreTitleM?.[2] ?? scorePlainM?.[1] ?? "";
+          artistTopSongs.push({
+            title: decodeEntities(songM[2].trim()),
+            url: songM[1].startsWith("http") ? songM[1] : BASE + songM[1],
+            album: albumM?.[1] ? decodeEntities(albumM[1].trim()) || null : null,
+            cover: coverM?.[1] ? cleanImageUrl(coverM[1]) : null,
+            score: parseScore((scoreRaw ?? "").trim()),
+            ratingCount: countRaw ? parseInt(countRaw.replace(/,/g, ""), 10) : null,
+          });
+        }
       }
     }
   }
@@ -198,8 +238,10 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
     comments.push({
       id: parseId(id) ?? 0,
       username: userM?.[2] ? decodeEntities(userM[2].trim()) : "",
+      usernameColor: null,
       userUrl: userM?.[1] ? (userM[1].startsWith("http") ? userM[1] : BASE + userM[1]) : "",
       avatar: avatarM?.[1] ? cleanImageUrl(avatarM[1]) : null,
+      subscriber: /class="donor[\s"]/.test(c),
       date: dateM?.[2] ? dateM[2].trim() : "",
       dateExact: dateM?.[1] ? dateM[1].trim() : "",
       text: textM?.[1] ? decodeEntities(textM[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()) : "",
@@ -229,6 +271,8 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
     likePercentage: parsePercent(likePercentage),
     dislikePercentage: parsePercent(dislikePercentage),
     tracklist,
+    tracklistTotalLength,
+    artistTopSongs,
     tags,
     credits: s.credits.filter((c) => c.artists.length > 0),
     topRatings: s.topRatings,
@@ -237,13 +281,13 @@ export async function scrapeSongPage(pageUrl: string, opts: FetchOpts = FETCH_OP
 }
 
 async function scrapeSongRatingRows(res: Response): Promise<SongRating[]> {
-  type RawSongRating = { username: string; userUrl: string; avatar: string | null; rating: string; date: string | null };
+  type RawSongRating = { username: string; displayName: string; userUrl: string; avatar: string | null; subscriber: boolean; rating: string; date: string | null };
   const ratings: RawSongRating[] = [];
   const st: { cur: RawSongRating | null } = { cur: null };
   await new HTMLRewriter()
     .on(".songRatings", {
       element() {
-        st.cur = { username: "", userUrl: "", avatar: null, rating: "", date: null };
+        st.cur = { username: "", displayName: "", userUrl: "", avatar: null, subscriber: false, rating: "", date: null };
         ratings.push(st.cur);
       },
     })
@@ -270,6 +314,12 @@ async function scrapeSongRatingRows(res: Response): Promise<SongRating[]> {
       },
       text(t) {
         if (st.cur && !(st.cur.username ?? "").trim()) st.cur.username = (st.cur.username ?? "") + t.text;
+        if (st.cur) st.cur.displayName = (st.cur.displayName ?? "") + t.text;
+      },
+    })
+    .on(".songRatings .cell.userName .donor", {
+      element() {
+        if (st.cur) st.cur.subscriber = true;
       },
     })
     .on(".songRatings .cell.userName .gray-font", {
@@ -286,34 +336,157 @@ async function scrapeSongRatingRows(res: Response): Promise<SongRating[]> {
     .arrayBuffer();
   return ratings
     .filter((r) => (r.username ?? "").trim())
-    .map((r) => ({
-      username: decodeEntities((r.username ?? "").trim()),
-      userUrl: r.userUrl ?? "",
-      avatar: cleanImageUrl(r.avatar ?? null),
-      rating: parseScore((r.rating ?? "").trim()),
-      date: (r.date ?? "").trim() || null,
-    }));
+    .map((r) => {
+      const username = decodeEntities((r.username ?? "").trim());
+      const displayName = decodeEntities((r.displayName ?? "").trim()) || username;
+      return {
+        username,
+        displayName,
+        userUrl: r.userUrl ?? "",
+        avatar: cleanImageUrl(r.avatar ?? null),
+        subscriber: r.subscriber ?? false,
+        rating: parseScore((r.rating ?? "").trim()),
+        date: (r.date ?? "").trim() || null,
+      };
+    });
 }
 
-export async function scrapeSongRatingsPage(slug: string, page: number, opts: FetchOpts = FETCH_OPTS): Promise<{ slug: string; page: number; ratings: SongRating[] }> {
+export async function scrapeSongRatingsPage(slug: string, page: number, opts: FetchOpts = FETCH_OPTS): Promise<{ slug: string; page: number; totalPages: number | null; ratings: SongRating[] }> {
   const url = page > 1 ? `${BASE}/song/${slug}/${page}/` : `${BASE}/song/${slug}/`;
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`Song ratings fetch failed: ${res.status}`);
-  return { slug, page, ratings: await scrapeSongRatingRows(res) };
+  const html = await res.text();
+  // Pagination links (/song/<slug>/<n>/); the last one is the final page.
+  let totalPages: number | null = null;
+  for (const m of html.matchAll(/<a href="\/song\/[^"/]+\/(\d+)\/"[^>]*>\s*<div class="pageSelectSmall"/g)) {
+    const n = parseInt(m[1] ?? "", 10);
+    if (Number.isFinite(n) && (totalPages === null || n > totalPages)) totalPages = n;
+  }
+  return { slug, page, totalPages, ratings: await scrapeSongRatingRows(new Response(html)) };
+}
+
+export interface SongCriticListItem {
+  rank: number | null;
+  publication: string;
+  url: string;
+}
+
+/**
+ * Scrape the "Critic Lists" year-end placements table from a song detail page.
+ * AOTY has no dedicated critic-lists sub-page for songs (unlike albums), so this
+ * parses the table embedded in the song page itself. Rows are only captured after
+ * the "Critic Lists" heading to avoid matching unrelated `.listTable` markup.
+ */
+export async function scrapeSongCriticLists(slug: string, opts: FetchOpts = FETCH_OPTS): Promise<{ slug: string; lists: SongCriticListItem[] }> {
+  const res = await fetch(`${BASE}/song/${slug}/`, opts);
+  if (!res.ok) throw new Error(`Song critic lists fetch failed: ${res.status}`);
+
+  const lists: Array<{ rank: string; publication: string; url: string }> = [];
+  const st = {
+    inSection: false,
+    cur: null as { rank: string; publication: string; url: string } | null,
+  };
+
+  await new HTMLRewriter()
+    .on(".sectionHeading h2", {
+      text(t) {
+        if (t.text.trim() === "Critic Lists") st.inSection = true;
+      },
+    })
+    .on(".listTable tr", {
+      element() {
+        if (!st.inSection) {
+          st.cur = null;
+          return;
+        }
+        st.cur = { rank: "", publication: "", url: "" };
+        lists.push(st.cur);
+      },
+    })
+    .on(".listTable td.rank", {
+      text(t) {
+        if (st.cur) st.cur.rank += t.text;
+      },
+    })
+    .on(".listTable td a[href*='/songs/list/']", {
+      element(el) {
+        if (st.cur && !st.cur.url) {
+          const href = el.getAttribute("href") ?? "";
+          st.cur.url = href.startsWith("http") ? href : BASE + href;
+        }
+      },
+      text(t) {
+        if (st.cur) st.cur.publication += t.text;
+      },
+    })
+    .transform(res)
+    .arrayBuffer();
+
+  return {
+    slug,
+    lists: lists
+      .filter((l) => l.url && l.publication.trim())
+      .map((l) => ({
+        rank: parseRank(l.rank.replace("#", "").trim()),
+        publication: decodeEntities(l.publication.trim()),
+        url: l.url,
+      })),
+  };
 }
 
 export async function scrapeTopSongs(period: string, page: number, opts: FetchOpts = FETCH_OPTS): Promise<{ period: string; page: number; songs: TopSong[] }> {
+  const { songs } = await scrapeTopSongsPage(period, page, opts);
+  return { period, page, songs };
+}
+
+export async function scrapeTopSongsPage(period: string, page: number, opts: FetchOpts = FETCH_OPTS): Promise<{ period: string; page: number; totalPages: number | null; note: string | null; years: PageTab[]; songs: TopSong[] }> {
   const aotyPath = page > 1 ? `/songs/top/${period}/${page}/` : `/songs/top/${period}/`;
   const res = await fetch(`${BASE}${aotyPath}`, opts);
   if (!res.ok) throw new Error(`Top songs fetch failed: ${res.status}`);
-  type RawTopSong = { rank: string; title: string; url: string; artist: string; artistUrl: string; album: string | null; albumUrl: string | null; cover: string | null; score: string | null; ratingCount: string | null };
+  const html = await res.text();
+  const parsed = await parseTopSongsRows(new Response(html));
+  let totalPages: number | null = null;
+  for (const m of html.matchAll(/<a href="[^"]*\/songs\/top\/[^"]*\/(\d+)\/"[^>]*>\s*<div class="pageSelectSmall"/g)) {
+    const n = parseInt(m[1] ?? "", 10);
+    if (Number.isFinite(n) && (totalPages === null || n > totalPages)) totalPages = n;
+  }
+  const noteM = html.match(/<strong>Note:<\/strong>([^<]*)/i);
+  const years: PageTab[] = [];
+  const yearNavIdx = html.indexOf("yearNav");
+  if (yearNavIdx !== -1) {
+    const chunk = html.slice(yearNavIdx, yearNavIdx + 6000);
+    for (const m of chunk.matchAll(/<a href="([^"]+)">[\s\S]*?<div class="yearNavBox[^"]*">([^<]*)<\/div>/g)) {
+      const href = m[1] ?? "";
+      const label = decodeEntities((m[2] ?? "").trim());
+      if (href && label) {
+        years.push({ label, url: href.startsWith("http") ? href : BASE + href, selected: false });
+      }
+    }
+    for (const m of chunk.matchAll(/<div class="yearNavBox[^"]*selected[^"]*">([^<]*)<\/div>/g)) {
+      const label = decodeEntities((m[1] ?? "").trim());
+      const hit = years.find((y) => y.label === label);
+      if (hit) hit.selected = true;
+    }
+  }
+  return {
+    period,
+    page,
+    totalPages,
+    note: noteM?.[1] ? decodeEntities(noteM[1].trim()) : null,
+    years,
+    songs: parsed.songs,
+  };
+}
+
+async function parseTopSongsRows(res: Response): Promise<{ songs: TopSong[] }> {
+  type RawTopSong = { rank: string; title: string; url: string; artist: string; artistUrl: string; artists: ArtistLink[]; album: string | null; albumUrl: string | null; cover: string | null; score: string | null; exactScore: string | null; ratingCount: string | null };
   const songs: RawTopSong[] = [];
   let cur: RawTopSong | null = null;
   let linkKind: "song" | "artist" | "album" | null = null;
   await new HTMLRewriter()
     .on(".trackListTable tr", {
       element() {
-        cur = { rank: String(songs.length + 1), title: "", url: "", artist: "", artistUrl: "", album: null, albumUrl: null, cover: null, score: null, ratingCount: null };
+        cur = { rank: String(songs.length + 1), title: "", url: "", artist: "", artistUrl: "", artists: [], album: null, albumUrl: null, cover: null, score: null, exactScore: null, ratingCount: null };
         songs.push(cur);
         linkKind = null;
       },
@@ -332,7 +505,9 @@ export async function scrapeTopSongs(period: string, page: number, opts: FetchOp
           if (!cur.url) cur.url = href.startsWith("http") ? href : BASE + href;
         } else if (href.includes("/artist/")) {
           linkKind = "artist";
-          if (!cur.artistUrl) cur.artistUrl = href.startsWith("http") ? href : BASE + href;
+          const url = href.startsWith("http") ? href : BASE + href;
+          if (!cur.artistUrl) cur.artistUrl = url;
+          cur.artists.push({ name: "", url, image: null });
         } else if (href.includes("/album/")) {
           linkKind = "album";
           if (!cur.albumUrl) cur.albumUrl = href.startsWith("http") ? href : BASE + href;
@@ -341,7 +516,11 @@ export async function scrapeTopSongs(period: string, page: number, opts: FetchOp
       text(t) {
         if (!cur || !linkKind) return;
         if (linkKind === "song") cur.title = (cur.title ?? "") + t.text;
-        else if (linkKind === "artist") cur.artist = (cur.artist ?? "") + t.text;
+        else if (linkKind === "artist") {
+          cur.artist = (cur.artist ?? "") + t.text;
+          const last = cur.artists[cur.artists.length - 1];
+          if (last) last.name += t.text;
+        }
         else if (linkKind === "album") cur.album = ((cur.album ?? "") as string) + t.text;
       },
     })
@@ -351,6 +530,13 @@ export async function scrapeTopSongs(period: string, page: number, opts: FetchOp
       },
     })
     .on(".trackRating .green-font, .trackRating .yellow-font, .trackRating .red-font", {
+      element(el) {
+        if (cur && !cur.exactScore) {
+          const title = el.getAttribute("title") ?? "";
+          const m = title.match(/([\d.]+)/);
+          if (m?.[1]) cur.exactScore = m[1];
+        }
+      },
       text(t) {
         if (cur) cur.score = ((cur.score ?? "") as string) + t.text;
       },
@@ -364,8 +550,6 @@ export async function scrapeTopSongs(period: string, page: number, opts: FetchOp
     .arrayBuffer();
 
   return {
-    period,
-    page,
     songs: songs
       .filter((x) => (x.title ?? "").trim())
       .map((x, i) => ({
@@ -375,10 +559,14 @@ export async function scrapeTopSongs(period: string, page: number, opts: FetchOp
         artist: decodeEntities((x.artist ?? "").trim()),
         artistUrl: x.artistUrl ?? "",
         artistImage: null,
+        artists: (x.artists ?? [])
+          .map((a) => ({ name: decodeEntities((a.name ?? "").trim()), url: a.url ?? "", image: null as string | null }))
+          .filter((a) => a.name && a.url),
         album: x.album ? decodeEntities((x.album as string).trim()) : null,
         albumUrl: x.albumUrl ?? null,
         cover: cleanImageUrl(x.cover ?? null),
         score: parseScore((x.score ?? "").trim()),
+        exactScore: x.exactScore ? parseScore(x.exactScore.trim()) : null,
         ratingCount: parseCount((x.ratingCount ?? "").replace(/Ratings?/i, "").trim()),
       })),
   };
@@ -449,5 +637,77 @@ export async function scrapeBestSongsYearEnd(
   }
 
   return { year, sort, songs };
+}
+
+export interface BestSongsMeta {
+  playlistUrl: string | null;
+  banner: string | null;
+  availableYears: number[];
+}
+
+export interface IndividualSongList {
+  publication: string;
+  sourceUrl: string | null;
+  entries: Array<{ artist: string; title: string }>;
+}
+
+/** Year nav, playlist, banner and methodology for the best-songs aggregate. */
+export async function scrapeBestSongsMeta(year: number, sort: string, opts: FetchOpts = FETCH_OPTS): Promise<BestSongsMeta> {
+  const url = sort === "lists" ? `${BASE}/songs/best/${year}/sort-by/lists/` : `${BASE}/songs/best/${year}/`;
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`Best songs meta fetch failed: ${res.status}`);
+  const html = await res.text();
+  const playlistM = html.match(/<div class="footerButton spotify">\s*<a href="([^"]+)"/);
+  const bannerM = html.match(/<img[^>]*src="([^"]*banner[^"]*)"/i);
+  const years = new Set<number>();
+  for (const m of html.matchAll(/<a href="\/songs\/best\/(\d{4})\/">/g)) {
+    const y = parseInt(m[1] ?? "", 10);
+    if (Number.isFinite(y)) years.add(y);
+  }
+  return {
+    playlistUrl: playlistM?.[1] ?? null,
+    banner: bannerM?.[1] ? cleanImageUrl(bannerM[1]) : null,
+    availableYears: [...years].sort((a, b) => b - a),
+  };
+}
+
+/** Per-publication individual song lists behind the aggregate ("The Individual Lists"). */
+export async function scrapeBestSongsLists(year: number, sort: string, opts: FetchOpts = FETCH_OPTS): Promise<{ year: number; sort: string; methodology: Array<{ place: string; points: string }>; individualLists: IndividualSongList[] }> {
+  const url = sort === "lists" ? `${BASE}/songs/best/${year}/sort-by/lists/` : `${BASE}/songs/best/${year}/`;
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`Best songs lists fetch failed: ${res.status}`);
+  const html = await res.text();
+  const methodology: Array<{ place: string; points: string }> = [];
+  for (const m of html.matchAll(/<div class="pointRow">\s*<div class="left">([^<]*)<\/div>\s*<div class="right">([^<]*)<\/div>/g)) {
+    const place = decodeEntities((m[1] ?? "").trim());
+    const points = decodeEntities((m[2] ?? "").trim());
+    if (place) methodology.push({ place, points });
+  }
+  const individualLists: IndividualSongList[] = [];
+  for (const m of html.matchAll(/<div class="songListContainer">([\s\S]*?)(?=<div class="songListContainer"|<div id="comments"|<div class="footer"|$)/g)) {
+    const block = m[1] ?? "";
+    const titleM = block.match(/<div class="songListTitle">([^<]*)<\/div>/);
+    const sourceM = block.match(/<div class="songListSource">\s*<a href="([^"]+)"/);
+    const entries: Array<{ artist: string; title: string }> = [];
+    for (const li of block.matchAll(/<li class="songListRow">([\s\S]*?)<\/li>/g)) {
+      const item = li[1] ?? "";
+      const artistM = item.match(/<span class="songListArtist">([^<]*)<\/span>/);
+      const text = decodeEntities(item.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+      const artist = artistM?.[1] ? decodeEntities(artistM[1].trim()) : "";
+      let title = text;
+      if (artist && text.startsWith(artist)) title = text.slice(artist.length).trim();
+      title = title.replace(/^[\s\-–—"\u201c\u201d'\u2018\u2019]+/, "").replace(/[\s\-–—"\u201c\u201d'\u2018\u2019]+$/, "").trim();
+      if (title) entries.push({ artist, title });
+    }
+    const publication = titleM?.[1] ? decodeEntities(titleM[1].trim()) : "";
+    if (publication && entries.length > 0) {
+      individualLists.push({
+        publication,
+        sourceUrl: sourceM?.[1] ?? null,
+        entries,
+      });
+    }
+  }
+  return { year, sort, methodology, individualLists };
 }
 

@@ -404,3 +404,59 @@ describe("artist scrapers unit tests", () => {
     }
   });
 });
+
+describe("scrapeArtistPage live-format top songs and header metadata", () => {
+  it("parses album names, rating counts and head metadata", async () => {
+    const html = `
+      <link href="https://www.albumoftheyear.org/artist/183-kanye-west/" rel="canonical" />
+      <meta property="og:image" content="https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg" />
+      <meta name="description" content="Complete discography for Kanye West with critic and user scores. Notable albums include My Beautiful Dark Twisted Fantasy, Graduation, The College Dropout." />
+      <script type="application/ld+json">{"@type":"MusicGroup","name":"Kanye West","sameAs":"https://yeezy.com"}</script>
+      <h1 class="artistHeadline">Kanye West</h1>
+      <div class="artistImage"><img src="https://cdn.albumoftheyear.org/artists/sq/kanye-west_1586101900.jpg" /></div>
+      <div class="artistCriticScore">80</div>
+      <div class="artistCriticScoreBox"><div class="text">100 ratings</div></div>
+      <div class="artistUserScoreBox"><div class="artistUserScore">85</div><div class="text">2000 ratings</div></div>
+      <div class="followCount">6,869 Followers</div>
+      <div class="artistTopBox info">
+        <div class="detailRow"><a href="/genre/3-hip-hop/">Hip Hop</a> / Genre</div>
+      </div>
+      <table class="trackListTable">
+        <tr>
+          <td class="coverart"><a href="/song/23285-life-of-the-party/"><img src="https://cdn2.aoty.org/50x0/album/donda.jpg" /></a></td>
+          <td class="songAlbum"><div style="font-weight: bold;"><a href="/song/23285-life-of-the-party/">Life Of The Party</a></div><div class="gray-font">Donda (Deluxe)</div></td>
+          <td class="trackRating noPadding"><span class="green-font" title="1614 Rating">98</span></td>
+        </tr>
+        <tr>
+          <td class="coverart"><a href="/song/487-no-more-parties-in-la/"><div class="noCoverContainer"><div class="noCover tiny"><i class="fa-light fa-lock"></i></div></div></a></td>
+          <td class="songAlbum"><div style="font-weight: bold;"><a href="/song/487-no-more-parties-in-la/">No More Parties in LA</a></div><div class="gray-font">The Life of Pablo</div></td>
+          <td class="trackRating noPadding"><span class="green-font" title="5554 Ratings">97</span></td>
+        </tr>
+      </table>
+    `;
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(html, { status: 200 });
+
+    try {
+      const { scrapeArtistPage } = await import("../src/scrapers/artist.js");
+      const artist = await scrapeArtistPage("https://www.albumoftheyear.org/artist/183-kanye-west/");
+      expect(artist.id).toBe(183);
+      expect(artist.canonicalUrl).toBe("https://www.albumoftheyear.org/artist/183-kanye-west/");
+      expect(artist.imageFull).toBe("https://cdn.albumoftheyear.org/artists/kanye-west_1586101900.jpg");
+      expect(artist.sameAs).toBe("https://yeezy.com");
+      expect(artist.notableAlbums).toEqual(["My Beautiful Dark Twisted Fantasy", "Graduation", "The College Dropout"]);
+      expect(artist.topSongs.length).toBe(2);
+      expect(artist.topSongs[0]?.title).toBe("Life Of The Party");
+      expect(artist.topSongs[0]?.album).toBe("Donda (Deluxe)");
+      expect(artist.topSongs[0]?.ratingCount).toBe(1614);
+      expect(artist.topSongs[0]?.score).toBe(98);
+      expect(artist.topSongs[0]?.artist).toBe("Kanye West");
+      expect(artist.topSongs[1]?.album).toBe("The Life of Pablo");
+      expect(artist.topSongs[1]?.ratingCount).toBe(5554);
+      expect(artist.topSongs[1]?.cover).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

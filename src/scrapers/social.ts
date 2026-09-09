@@ -1,4 +1,4 @@
-import { BASE, FETCH_OPTS, REQ_HEADERS, cleanImageUrl, decodeEntities, parseCount, parseId, parseRank, type FetchOpts } from "../constants.js";
+import { BASE, FETCH_OPTS, REQ_HEADERS, cleanImageUrl, decodeEntities, parseCount, parseId, parseRank, parseScore, type FetchOpts } from "../constants.js";
 import type {
   AllCommentsResult,
   AotyComment,
@@ -8,6 +8,7 @@ import type {
   CriticListRank,
   EntityCorrectionsResult,
   FaqItem,
+  NamedLink,
   NewsDetail,
   NewsSearchItem,
   SiteUpdate,
@@ -166,63 +167,58 @@ export async function scrapeGuidelines(type: "review" | "comment", opts: FetchOp
 export async function scrapeChangelog(opts: FetchOpts = FETCH_OPTS): Promise<ChangelogEntry[]> {
   const res = await fetch(`${BASE}/changelog/`, opts);
   if (!res.ok) throw new Error(`Changelog fetch failed: ${res.status}`);
+  const html = await res.text();
   const entries: ChangelogEntry[] = [];
-  const st: { cur: ChangelogEntry | null; textBuf: string } = { cur: null, textBuf: "" };
-  await new HTMLRewriter()
-    .on(".changeSection", {
-      element() {
-        if (st.cur) st.cur.text = st.textBuf.trim();
-        st.cur = { date: "", type: "", title: "", text: "" };
-        entries.push(st.cur);
-        st.textBuf = "";
-      },
-    })
-    .on(".changeSection .changeDate", {
-      text(t) {
-        if (st.cur) st.cur.date = (st.cur.date ?? "") + t.text;
-      },
-    })
-    .on(".changeSection .changeType", {
-      text(t) {
-        if (st.cur) st.cur.type = (st.cur.type ?? "") + t.text;
-      },
-    })
-    .on(".changeSection .changeTitle", {
-      text(t) {
-        if (st.cur) st.cur.title = (st.cur.title ?? "") + t.text;
-      },
-    })
-    .on(".changeSection .changeText", {
-      text(t) {
-        st.textBuf += `${t.text} `;
-      },
-    })
-    .transform(res)
-    .arrayBuffer();
-  if (st.cur) st.cur.text = st.textBuf.trim();
-  return entries.map((e) => ({
-    date: (e.date ?? "").trim(),
-    type: (e.type ?? "").trim(),
-    title: decodeEntities((e.title ?? "").trim()),
-    text: decodeEntities((e.text ?? "").replace(/\s+/g, " ").trim()),
-  }));
+  // One .changeSection can hold several type/title/text triples (one entry each).
+  for (const sec of html.matchAll(/<section class="changeSection">([\s\S]*?)<\/section>/g)) {
+    const body = sec[1] ?? "";
+    const dateM = body.match(/<div class="changeDate">([^<]*)<\/div>/);
+    const date = (dateM?.[1] ?? "").trim();
+    const parts = body.split(/(?=<div class="changeType)/g).filter((p) => p.includes("changeTitle"));
+    if (parts.length === 0) continue;
+    for (const part of parts) {
+      const typeM = part.match(/<div class="changeType[^"]*">([^<]*)<\/div>/);
+      const titleM = part.match(/<h2 class="changeTitle">([\s\S]*?)<\/h2>/);
+      const textM = part.match(/<div class="changeText">([\s\S]*?)<\/div>/);
+      const textHtml = textM?.[1] ?? "";
+      const links: import("../types.js").NamedLink[] = [];
+      for (const m of textHtml.matchAll(/<a href="([^"]+)">([^<]*)<\/a>/g)) {
+        const href = m[1] ?? "";
+        const name = m[2] ?? "";
+        if (href && name.trim()) {
+          links.push({
+            name: decodeEntities(name.trim()),
+            url: href.startsWith("http") ? href : href.startsWith("/") ? BASE + href : `${BASE}/${href}`,
+          });
+        }
+      }
+      entries.push({
+        date,
+        type: (typeM?.[1] ?? "").trim(),
+        title: decodeEntities((titleM?.[1] ?? "").replace(/<[^>]+>/g, "").trim()),
+        text: decodeEntities(textHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()),
+        links,
+      });
+    }
+  }
+  return entries;
 }
 
 export async function scrapeSiteStats(opts: FetchOpts = FETCH_OPTS): Promise<SiteStats> {
   const res = await fetch(`${BASE}/stats/`, opts);
   if (!res.ok) throw new Error(`Site stats fetch failed: ${res.status}`);
 
-  const totals: Array<{ name: string; value: string }> = [];
+  const totals: Array<{ name: string; value: string; key: string | null; timestamp: string | null }> = [];
   const leaderboards: LeaderboardModule[] = [];
 
-  let currentSingle: { name: string; value: string } | null = null;
+  let currentSingle: { name: string; value: string; key: string | null; timestamp: string | null } | null = null;
   let currentLeaderboard: LeaderboardModule | null = null;
   let currentCells: string[] = [];
 
   await new HTMLRewriter()
     .on(".module.singleStat", {
       element() {
-        currentSingle = { name: "", value: "" };
+        currentSingle = { name: "", value: "", key: null, timestamp: null };
         totals.push(currentSingle);
       },
     })
@@ -234,6 +230,16 @@ export async function scrapeSiteStats(opts: FetchOpts = FETCH_OPTS): Promise<Sit
     .on(".module.singleStat .statValue", {
       text(t) {
         if (currentSingle) currentSingle.value = (currentSingle.value ?? "") + t.text;
+      },
+    })
+    .on(".module.singleStat .refreshStats", {
+      element(el) {
+        if (currentSingle) currentSingle.key = el.getAttribute("data-key") ?? null;
+      },
+    })
+    .on(".module.singleStat .timestamp", {
+      text(t) {
+        if (currentSingle) currentSingle.timestamp = ((currentSingle.timestamp ?? "") as string) + t.text;
       },
     })
     .on(".module:not(.singleStat)", {
@@ -297,6 +303,8 @@ export async function scrapeSiteStats(opts: FetchOpts = FETCH_OPTS): Promise<Sit
     totals: totals.map((t) => ({
       name: decodeEntities((t.name ?? "").trim()),
       value: parseCount((t.value ?? "").trim()) ?? 0,
+      key: t.key ?? null,
+      timestamp: t.timestamp ? (t.timestamp as string).trim() : null,
     })),
     leaderboards: leaderboards.map((l) => ({
       title: decodeEntities((l.title ?? "").trim()),
@@ -307,18 +315,67 @@ export async function scrapeSiteStats(opts: FetchOpts = FETCH_OPTS): Promise<Sit
   };
 }
 
-export async function scrapeCommentsPage(aotyPath: string, opts: FetchOpts = FETCH_OPTS): Promise<AotyComment[]> {
+/** Live-refresh a stats module. Verified shape: {"html":"1,973,103<\/div>","timestamp":"0s ago"}. */
+export async function scrapeStatsRefresh(key: string, opts: FetchOpts = FETCH_OPTS): Promise<{ key: string; html: string; timestamp: string | null }> {
+  const res = await fetch(`${BASE}/stats/stats-refresh.php?key=${encodeURIComponent(key)}`, opts);
+  if (!res.ok) throw new Error(`Stats refresh failed: ${res.status}`);
+  const text = await res.text();
+  try {
+    const data = JSON.parse(text) as { html?: unknown; timestamp?: unknown };
+    return {
+      key,
+      html: typeof data.html === "string" ? data.html : text,
+      timestamp: typeof data.timestamp === "string" ? data.timestamp : null,
+    };
+  } catch {
+    return { key, html: text, timestamp: null };
+  }
+}
+
+export async function scrapeCommentsPage(aotyPath: string, opts: FetchOpts = FETCH_OPTS): Promise<{ comments: AotyComment[]; moreDiscussion: import("../types.js").DiscussionEntry[] }> {
   const res = await fetch(`${BASE}${aotyPath}`, opts);
   if (!res.ok) throw new Error(`Comments fetch failed: ${res.status}`);
-  return scrapeCommentRows(res);
+  const html = await res.text();
+  const comments = await scrapeCommentRows(new Response(html));
+  return { comments, moreDiscussion: parseDiscussionTable(html) };
+}
+
+/** "More Discussion" album table (album/user-reviews + comments pages, /users/). */
+export function parseDiscussionTable(html: string): import("../types.js").DiscussionEntry[] {
+  const discussions: import("../types.js").DiscussionEntry[] = [];
+  const tableM = html.match(/<table class="discussion">([\s\S]*?)<\/table>/i);
+  if (!tableM?.[1]) return discussions;
+  for (const tr of tableM[1].matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
+    const row = tr[1] ?? "";
+    if (!row || row.includes("<th")) continue;
+    const coverM = row.match(/class="coverart"[^>]*>[\s\S]*?<a href="([^"]+)">[\s\S]*?<img[^>]*src="([^"]+)"/i);
+    const titleM = row.match(/<td class="title">[\s\S]*?<a href="([^"]+)">([\s\S]*?)<\/a>/i);
+    const commentsM = row.match(/<td class="comments">([^<]*)<\/td>/i);
+    const lastUserM = row.match(/class="lastPost"[^>]*>[\s\S]*?<a href="([^"]*\/user\/[^"]*)">([^<]*)<\/a>/i);
+    const lastDateM = row.match(/<div class="date"[^>]*title="([^"]*)"[^>]*>([^<]*)<\/div>/i);
+    if (!titleM?.[1]) continue;
+    const titleHtml = titleM[2] ?? "";
+    const divs = [...titleHtml.matchAll(/<div>([^<]*)<\/div>/g)].map((d) => decodeEntities((d[1] ?? "").trim())).filter(Boolean);
+    discussions.push({
+      artist: divs[0] ?? "",
+      album: divs[1] ?? divs[0] ?? "",
+      albumUrl: titleM[1].startsWith("http") ? titleM[1] : BASE + titleM[1],
+      cover: coverM?.[2] ? cleanImageUrl(coverM[2]) : null,
+      commentCount: commentsM?.[1] ? parseInt(commentsM[1].replace(/,/g, "").trim(), 10) || 0 : 0,
+      lastUser: lastUserM?.[2] ? decodeEntities(lastUserM[2].trim()) : "",
+      lastUserUrl: lastUserM?.[1] ? (lastUserM[1].startsWith("http") ? lastUserM[1] : BASE + lastUserM[1]) : "",
+      lastPostAgo: lastDateM?.[2] ? lastDateM[2].trim() : null,
+      lastPostExact: lastDateM?.[1] ? lastDateM[1].trim() : null,
+    });
+  }
+  return discussions;
 }
 
 export async function scrapeNewsDetail(slug: string, opts: FetchOpts = FETCH_OPTS): Promise<NewsDetail> {
   const url = `${BASE}/l/${slug}/`;
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(`News item fetch failed: ${res.status}`);
-  const [detailRes, commentsRes] = await Promise.all([fetch(url, opts), fetch(url, opts)]);
-  if (!detailRes.ok || !commentsRes.ok) throw new Error("News item fetch failed");
+  const html = await res.text();
   const s = {
     title: "",
     source: "",
@@ -394,10 +451,41 @@ export async function scrapeNewsDetail(slug: string, opts: FetchOpts = FETCH_OPT
         }
       },
     })
-    .transform(detailRes)
+    .transform(new Response(html))
     .arrayBuffer();
-  const comments = await scrapeCommentRows(commentsRes);
+  const comments = await scrapeCommentRows(new Response(html));
   const idM = slug.match(/^(\d+)/);
+  // Structured entity block: Artist / Album / Label rows + tags.
+  let newsArtist: NamedLink | null = null;
+  let newsAlbum: NamedLink | null = null;
+  let newsLabel: string | null = null;
+  for (const m of html.matchAll(/<div class="mediaDetailsRow">[\s\S]*?<span>([^<]*)<\/span>([\s\S]*?)<\/div>/g)) {
+    const kind = (m[1] ?? "").replace("/", "").trim().toLowerCase();
+    const body = m[2] ?? "";
+    const linkM = body.match(/<a href="([^"]+)">([^<]+)<\/a>/);
+    if (linkM?.[1] && linkM[2]) {
+      const link = {
+        name: decodeEntities(linkM[2].trim()),
+        url: linkM[1].startsWith("http") ? linkM[1] : BASE + linkM[1],
+      };
+      if (kind.includes("artist") && !newsArtist) newsArtist = link;
+      else if (kind.includes("album") && !newsAlbum) newsAlbum = link;
+    } else if (kind.includes("label")) {
+      const plain = decodeEntities(body.replace(/<[^>]+>/g, "").trim());
+      if (plain) newsLabel = plain;
+    }
+  }
+  const newsTags: NamedLink[] = [];
+  for (const m of html.matchAll(/<div class="tag[^"]*">\s*<a href="([^"]*\/tag\/[^"]*)">([^<]*)<\/a>/g)) {
+    const href = m[1] ?? "";
+    const name = m[2] ?? "";
+    if (href && name) {
+      newsTags.push({
+        name: decodeEntities(name.trim()),
+        url: href.startsWith("http") ? href : BASE + href,
+      });
+    }
+  }
   return {
     url,
     id: parseId(idM?.[1]) ?? 0,
@@ -409,6 +497,10 @@ export async function scrapeNewsDetail(slug: string, opts: FetchOpts = FETCH_OPT
     text: decodeEntities(s.text.trim()),
     likes: parseCount(s.likes.trim()) ?? 0,
     embedUrl: s.embedUrl,
+    artist: newsArtist,
+    album: newsAlbum,
+    label: newsLabel,
+    tags: newsTags,
     related: s.related.map((r) => ({ name: decodeEntities(r.name.trim()), url: r.url })),
     streamingLinks: s.streamingLinks,
     comments,
@@ -503,7 +595,7 @@ export async function scrapeSiteUpdates(opts: FetchOpts = FETCH_OPTS, filter: st
   await new HTMLRewriter()
     .on(".upd", {
       element() {
-        cur = { kind: "", title: "", url: "", artist: null, artistUrl: null, image: null, meta: null, timeAgo: null };
+        cur = { kind: "", title: "", url: "", artist: null, artistUrl: null, image: null, publication: null, publicationLogo: null, excerpt: null, sourceUrl: null, meta: null, timeAgo: null };
         updates.push(cur);
         linkKind = null;
       },
@@ -525,12 +617,40 @@ export async function scrapeSiteUpdates(opts: FetchOpts = FETCH_OPTS, filter: st
         } else if (href.includes("/artist/")) {
           linkKind = "artist";
           if (!cur.artistUrl) cur.artistUrl = href.startsWith("http") ? href : BASE + href;
-        } else linkKind = null;
+        } else {
+          // External "Source" link on review updates.
+          if (href.startsWith("http") && !cur.sourceUrl) cur.sourceUrl = href;
+          linkKind = null;
+        }
       },
       text(t) {
         if (!cur || !linkKind) return;
         if (linkKind === "title") cur.title = (cur.title ?? "") + t.text;
         else if (linkKind === "artist") cur.artist = ((cur.artist ?? "") as string) + t.text;
+      },
+    })
+    // Publication logo + name on review updates.
+    .on(".upd .updText img", {
+      element(el) {
+        if (!cur) return;
+        const src = el.getAttribute("src") ?? "";
+        if (src.includes("/publication/") && !cur.publicationLogo) {
+          cur.publicationLogo = cleanImageUrl(src);
+        }
+      },
+    })
+    .on(".upd .updText span", {
+      text(t) {
+        if (cur?.publicationLogo && !(cur.publication ?? "").trim()) {
+          const v = t.text.trim();
+          if (v && v.length < 80) cur.publication = (cur.publication ?? "") + t.text;
+        }
+      },
+    })
+    // Review excerpt paragraph.
+    .on(".upd .updText div[style*='margin']", {
+      text(t) {
+        if (cur && !(cur.excerpt ?? "").trim()) cur.excerpt = ((cur.excerpt ?? "") as string) + t.text;
       },
     })
     .on(".upd .updImage img", {
@@ -560,6 +680,10 @@ export async function scrapeSiteUpdates(opts: FetchOpts = FETCH_OPTS, filter: st
       artist: u.artist ? decodeEntities((u.artist as string).trim()) : null,
       artistUrl: u.artistUrl ?? null,
       image: cleanImageUrl(u.image ?? null),
+      publication: u.publication ? decodeEntities((u.publication as string).trim()) : null,
+      publicationLogo: cleanImageUrl(u.publicationLogo ?? null),
+      excerpt: u.excerpt ? decodeEntities((u.excerpt as string).replace(/\s+/g, " ").trim()) : null,
+      sourceUrl: u.sourceUrl ?? null,
       meta: (u.meta ?? "").trim() || null,
       timeAgo: (u.timeAgo ?? "").trim() || null,
     })),
@@ -577,6 +701,33 @@ export async function scrapeAlbumCommentReplies(albumId: string | number, commen
   return { albumId: parseId(albumId) ?? 0, commentId: parseId(commentId) ?? 0, replies: await scrapeCommentRows(res) };
 }
 
+/** Replies on a user-list comment thread (verified handler: showListCommentReplies {id, listID, commentType}). */
+export async function scrapeListCommentReplies(listId: string | number, commentId: string | number, opts: FetchOpts = FETCH_OPTS): Promise<{ listId: number; commentId: number; replies: AotyComment[] }> {
+  const res = await fetch(`${BASE}/scripts/showListCommentReplies.php`, {
+    ...opts,
+    method: "POST",
+    headers: { ...REQ_HEADERS, "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest", Referer: `${BASE}/list/${listId}/` },
+    body: new URLSearchParams({ id: String(commentId), listID: String(listId), commentType: "userList" }).toString(),
+  });
+  if (!res.ok) throw new Error(`List comment replies fetch failed: ${res.status}`);
+  return { listId: parseId(listId) ?? 0, commentId: parseId(commentId) ?? 0, replies: await scrapeCommentRows(res) };
+}
+
+/**
+ * Inline news embed (verified request: POST /scripts/showContent.php {linkID}).
+ * Embed markup varies by provider, so the fragment is returned raw.
+ */
+export async function scrapeNewsEmbed(linkId: string | number, opts: FetchOpts = FETCH_OPTS): Promise<{ id: number; html: string }> {
+  const res = await fetch(`${BASE}/scripts/showContent.php`, {
+    ...opts,
+    method: "POST",
+    headers: { ...REQ_HEADERS, "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest", Referer: `${BASE}/l/newsworthy/` },
+    body: new URLSearchParams({ linkID: String(linkId) }).toString(),
+  });
+  if (!res.ok) throw new Error(`News embed fetch failed: ${res.status}`);
+  return { id: parseId(linkId) ?? 0, html: await res.text() };
+}
+
 export async function scrapeHomepage(opts: FetchOpts = FETCH_OPTS): Promise<{
   newReleases: import("../types.js").AlbumBlock[];
   news: import("../types.js").NewsItem[];
@@ -589,6 +740,9 @@ export async function scrapeHomepage(opts: FetchOpts = FETCH_OPTS): Promise<{
   onThisDay: import("../types.js").AlbumBlock[];
   recentlyAdded: import("../types.js").AlbumBlock[];
   topSongs: import("../types.js").TopSong[];
+  bestSongs: import("../types.js").HomepageSong[];
+  popularGenres: import("../types.js").NamedLink[];
+  browseBy: import("../types.js").NamedLink[];
 }> {
   const { scrapeRatingsChart } = await import("./charts.js");
   const { scrapeUserReviewBlocks } = await import("./user.js");
@@ -629,6 +783,20 @@ export async function scrapeHomepage(opts: FetchOpts = FETCH_OPTS): Promise<{
     blocks(recentlyAddedRes),
     scrapeUserReviewBlocks(popularReviewsRes),
   ]);
+
+  // Bottom rails parsed from the homepage DOM itself (one extra fetch).
+  let bestSongs: import("../types.js").HomepageSong[] = [];
+  let popularGenres: import("../types.js").NamedLink[] = [];
+  let browseBy: import("../types.js").NamedLink[] = [];
+  try {
+    const homeRes = await fetch(`${BASE}/`, opts);
+    if (homeRes.ok) {
+      const homeHtml = await homeRes.text();
+      bestSongs = parseHomepageBestSongs(homeHtml);
+      popularGenres = parseHomepageLinkSection(homeHtml, "Popular Genres", /^\/genre\//);
+      browseBy = parseHomepageLinkSection(homeHtml, "Browse By", /^\/decade\/|^\/20\d\d\/releases\/|^\/week\//);
+    }
+  } catch { /* bottom rails are best-effort */ }
   return {
     newReleases,
     news: newsItems,
@@ -641,7 +809,60 @@ export async function scrapeHomepage(opts: FetchOpts = FETCH_OPTS): Promise<{
     onThisDay,
     recentlyAdded,
     topSongs: topSongs.songs,
+    bestSongs,
+    popularGenres,
+    browseBy,
   };
+}
+
+/** "Users' Best Songs of YYYY" track table at the bottom of the homepage. */
+function parseHomepageBestSongs(html: string): import("../types.js").HomepageSong[] {
+  const headIdx = html.indexOf("Best Songs");
+  if (headIdx === -1) return [];
+  const tableM = html.slice(headIdx).match(/<table class="trackListTable">([\s\S]*?)<\/table>/i);
+  const tableHtml = tableM?.[1];
+  if (!tableHtml) return [];
+  const songs: import("../types.js").HomepageSong[] = [];
+  for (const tr of tableHtml.matchAll(/<tr>([\s\S]*?)<\/tr>/g)) {
+    const row = tr[1] ?? "";
+    const coverM = row.match(/class="coverart"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i);
+    const songM = row.match(/class="songAlbum"[^>]*>[\s\S]*?<a href="([^"]*\/song\/[^"]*)">([^<]+)<\/a>/i);
+    const artistM = row.match(/<div class="gray-font">([^<]*)<\/div>/i);
+    const scoreM = row.match(/class="trackRating[^"]*"[^>]*>[\s\S]*?<span[^>]*title="([\d,]+) Ratings?"[^>]*>([^<]*)<\/span>/i)
+      ?? row.match(/class="trackRating[^"]*"[^>]*>[\s\S]*?<span[^>]*>([^<]*)<\/span>/i);
+    if (!songM?.[1] || !songM[2]) continue;
+    const countRaw = scoreM && scoreM.length > 2 ? scoreM[1] : null;
+    const scoreRaw = scoreM ? (scoreM.length > 2 ? scoreM[2] : scoreM[1]) : "";
+    songs.push({
+      title: decodeEntities(songM[2].trim()),
+      url: songM[1].startsWith("http") ? songM[1] : BASE + songM[1],
+      artist: artistM?.[1] ? decodeEntities(artistM[1].trim()) : "",
+      cover: coverM?.[1] ? cleanImageUrl(coverM[1]) : null,
+      score: parseScore((scoreRaw ?? "").trim()),
+      ratingCount: countRaw ? parseInt(countRaw.replace(/,/g, ""), 10) : null,
+    });
+  }
+  return songs;
+}
+
+/** Named link sections ("Popular Genres", "Browse By") sliced by heading. */
+function parseHomepageLinkSection(html: string, heading: string, hrefPattern: RegExp): import("../types.js").NamedLink[] {
+  const start = html.indexOf(heading);
+  if (start === -1) return [];
+  const next = html.indexOf("sectionHeading", start + heading.length);
+  const chunk = html.slice(start, next !== -1 ? next : start + 8000);
+  const links: import("../types.js").NamedLink[] = [];
+  const seen = new Set<string>();
+  for (const m of chunk.matchAll(/<a href="([^"]+)">([^<]*)<\/a>/g)) {
+    const href = m[1] ?? "";
+    const name = decodeEntities((m[2] ?? "").trim());
+    if (!href || !name || seen.has(href)) continue;
+    const path = href.startsWith("http") ? new URL(href).pathname : href;
+    if (!hrefPattern.test(path)) continue;
+    seen.add(href);
+    links.push({ name, url: href.startsWith("http") ? href : BASE + href });
+  }
+  return links;
 }
 
 export async function scrapeAlbumSubAlbums(albumSlug: string, sub: string, opts: FetchOpts = FETCH_OPTS, page = 1): Promise<{ slug: string; page: number; albums: import("../types.js").AlbumBlock[] }> {

@@ -46,8 +46,13 @@ Interactive docs are served at `/` via [Scalar](https://scalar.com). The raw Ope
 | GET | `/openapi.json` | | OpenAPI 3.1.0 spec (JSON) |
 | GET | `/openapi.yaml` | | OpenAPI 3.1.0 spec (YAML) |
 | GET | `/postman.json` | | Postman collection v2.1.0 |
+| GET | `/health` | | Health check (`{"status":"ok"}`, never cached) |
+| GET | `/status` | | API status, version & endpoint count (never cached) |
+| GET | `/batch` | `paths` (max 10, comma-separated) | Fetch multiple API paths in one request (never cached) |
+| POST | `/batch` | JSON body `{ "paths": [...] }` (max 10, 8KB) | Same as GET batch, for longer path lists (never cached) |
 | GET | `/album` | `slug` or (`artist`, `name`), `minimal` | Full album detail |
 | GET | `/album/similar` | `slug`, `page` | Albums similar to this album |
+| GET | `/album/summary` | `slug` or (`artist`, `name`), `minimal` | Lightweight album header (scores + meta, no reviews/comments/tracklist) |
 | GET | `/album/user-reviews` | `slug`, `sort` (popular, recent, worst), `type` (reviews, ratings), `page` | User reviews and ratings for an album |
 | GET | `/album/comments` | `slug`, `page` | Comments on an album |
 | GET | `/comments` | `type`, `itemId`, `albumId` | Full comment thread without truncation |
@@ -83,14 +88,15 @@ Interactive docs are served at `/` via [Scalar](https://scalar.com). The raw Ope
 | GET | `/random/genre` | | Random genre with sample albums (never cached) |
 | GET | `/random/song` | `period` | Random popular song (never cached) |
 | GET | `/random/must-hear` | `year`, `decade` | Random essential must-hear album (never cached) |
-| GET | `/label` | `slug`, `page` | Label details + releases |
+| GET | `/label` | `slug`, `page`, `sort` | Label details + releases |
+| GET | `/label/singles` | `slug`, `page`, `sort` | Label single releases |
 | GET | `/labels/autocomplete` | `q` | Label search / autocomplete |
 | GET | `/genres` | | All genres with sample albums |
 | GET | `/genres/autocomplete` | `q` | Musical genre autocomplete |
 | GET | `/genre` | `slug`, `period`, `page`, `sort`, `minReviews` | Genre best albums / recent (`period`: year, `all`, `recent`) |
 | GET | `/subgenres` | `genreId` | Subgenres list for a genre |
 | GET | `/genre/name` | `id` | Resolve numeric genre ID to its name |
-| GET | `/tag` | `tag`, `type`, `year`, `page` | Albums or media by tag |
+| GET | `/tag` | `tag`, `type`, `year`, `sort`, `page` | Albums, singles, artists or media by tag |
 | GET | `/publication` | `slug` | Publication details + reviews + top albums |
 | GET | `/publication/reviews` | `slug`, `page` | Recent reviews by a publication |
 | GET | `/publication/lists` | `slug`, `page` | Year-end lists by a publication |
@@ -98,9 +104,11 @@ Interactive docs are served at `/` via [Scalar](https://scalar.com). The raw Ope
 | GET | `/critic` | `slug`, `page` | Critic details + reviews |
 | GET | `/song` | `slug` | Song details, credits, ratings |
 | GET | `/song/ratings` | `slug`, `page` | All user ratings for a song |
+| GET | `/song/critic-lists` | `slug` | Year-end critic lists ranking a song |
 | GET | `/song/corrections` | `songId` or `slug` | Song submission and correction history |
 | GET | `/songs/top` | `period` (year, decade, `all`), `page` | Users' best songs |
 | GET | `/songs/best` | `year`, `sort` (points, lists) | Aggregated best songs of the year |
+| GET | `/songs/best/lists` | `year`, `sort` (points, lists) | Per-publication song lists + scoring methodology |
 | GET | `/user` | `username` | User profile + stats |
 | GET | `/user/stats` | `username` | User overview metrics & score distribution |
 | GET | `/user/favorites` | `username` | Favorite albums pinned to user profile |
@@ -110,6 +118,7 @@ Interactive docs are served at `/` via [Scalar](https://scalar.com). The raw Ope
 | GET | `/user/listened` | `username`, `page` | Albums a user listened to |
 | GET | `/user/library` | `username`, `t`, `s`, `page` | A user's library |
 | GET | `/user/liked-albums` | `username`, `page` | Albums a user has liked |
+| GET | `/user/spin-list` | `username`, `page` | Albums on a user's spin list |
 | GET | `/user/tags` | `username`, `scope`, `sort` | Tags a user applied |
 | GET | `/user/tag` | `username`, `tag`, `sort`, `page` | A user's albums with a tag |
 | GET | `/user/lists` | `username`, `page` | Lists created by a user |
@@ -121,6 +130,7 @@ Interactive docs are served at `/` via [Scalar](https://scalar.com). The raw Ope
 | GET | `/user/review` | `username`, `slug` | A single user review of an album |
 | GET | `/user/followers` | `username`, `page` | A user's followers |
 | GET | `/user/following` | `username`, `page` | Users a user follows |
+| GET | `/user/following-artists` | `username`, `page` | Artists a user follows (with follower counts) |
 | GET | `/user/genres` | `username` | User genre statistics and breakdown |
 | GET | `/user/badges` | `username` | User badges and achievements |
 | GET | `/users` | | Community updates (reviews + lists) |

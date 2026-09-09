@@ -200,3 +200,78 @@ describe("song scrapers unit tests", () => {
     }
   });
 });
+
+describe("song extended metadata", () => {
+  it("parses track rating counts, total length, artist top songs and rater badges", async () => {
+    const html = `
+      <h1 class="songTitle">Ghost Town</h1>
+      <div class="albumHeader song"><div class="artist"><a href="/artist/183-kanye-west/">Kanye West</a></div></div>
+      <div class="albumHeaderCover"><img src="https://cdn.aoty.org/ye.jpg" /></div>
+      <div class="songScore" title="96.9145">97</div>
+      <div class="songScoreBox"><div class="text"><strong>6,086</strong> ratings</div></div>
+      <div class="songInfo">
+        <div class="detailRow">Track #6 on <a href="/album/112577-kanye-west-ye.php">ye</a></div>
+      </div>
+      <table class="trackListTable">
+        <tr><td class="trackNumber">6</td><td class="trackTitle"><a href="/song/2580-ghost-town/">Ghost Town</a><div class="length">4:31</div></td><td class="trackRating noPadding"><span class="green-font" title="6086 Ratings">97</span></td></tr>
+        <tr><td class="trackNumber">7</td><td class="trackTitle"><a href="/song/6413-violent-crimes/">Violent Crimes</a><div class="length">3:35</div></td><td class="trackRating noPadding"><span class="green-font" title="5718 Ratings">94</span></td></tr>
+      </table>
+      <div class="totalLength">Total Length: 23 minutes</div>
+      <div class="section"><div class="sectionHeading"><h2><a href="/artist/183-kanye-west/best-songs/">Community's Top Songs</a></h2></div>
+      <table class="trackListTable">
+        <tr><td class="coverart"><a href="/song/23285-life-of-the-party/"><img src="https://cdn2.aoty.org/50x0/album/donda.jpg" /></a></td><td class="songAlbum"><div style="font-weight: bold;"><a href="/song/23285-life-of-the-party/">Life Of The Party</a></div><div class="gray-font">Donda (Deluxe)</div></td><td class="trackRating noPadding"><span class="green-font" title="1614 Ratings">98</span></td></tr>
+        <tr><td class="coverart"><a href="/song/487-no-more-parties-in-la/"><div class="noCoverContainer"><div class="noCover tiny"><i class="fa-light fa-lock"></i></div></div></a></td><td class="songAlbum"><div style="font-weight: bold;"><a href="/song/487-no-more-parties-in-la/">No More Parties in LA</a></div><div class="gray-font">The Life of Pablo</div></td><td class="trackRating noPadding"><span class="green-font" title="5554 Ratings">97</span></td></tr>
+      </table></div>
+      <div class="songRatings">
+        <div class="cell profilePic"><a href="/user/demzoart/"><img src="https://cdn.aoty.org/d.jpg" /></a></div>
+        <div class="cell userName"><a href="/user/demzoart/" style="color: #FF13C0;" title="demzoart">customname</a><div class="donor"><a href="/donate/"><i class="fas fa-check-circle"></i></a></div><span class="gray-font">16 Sep 2021</span></div>
+        <div class="cell score"><span class="green-font"><strong>100</strong></span></div>
+      </div>
+    `;
+
+    const restore = mockFetch(async () => new Response(html, { status: 200 }));
+    try {
+      const song = await scrapeSongPage("https://www.albumoftheyear.org/song/2580-ghost-town/");
+      expect(song.tracklist?.[0]?.ratingCount).toBe(6086);
+      expect(song.tracklist?.[1]?.ratingCount).toBe(5718);
+      expect(song.tracklistTotalLength).toBe("23 minutes");
+      expect(song.artistTopSongs.length).toBe(2);
+      expect(song.artistTopSongs[0]).toEqual({
+        title: "Life Of The Party",
+        url: "https://www.albumoftheyear.org/song/23285-life-of-the-party/",
+        album: "Donda (Deluxe)",
+        cover: "https://cdn2.aoty.org/album/donda.jpg",
+        score: 98,
+        ratingCount: 1614,
+      });
+      expect(song.artistTopSongs[1]?.cover).toBeNull();
+      expect(song.artistTopSongs[1]?.ratingCount).toBe(5554);
+      expect(song.topRatings[0]?.username).toBe("demzoart");
+      expect(song.topRatings[0]?.displayName).toBe("customname");
+      expect(song.topRatings[0]?.subscriber).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("parses song ratings total pages", async () => {
+    const html = `
+      <div class="songRatings">
+        <div class="cell profilePic"><a href="/user/fan/"><img src="https://cdn.aoty.org/fan.jpg" /></a></div>
+        <div class="cell userName"><a href="/user/fan/" title="fan">fan</a><span class="gray-font">2 days ago</span></div>
+        <div class="cell score">95</div>
+      </div>
+      <div class="pageSelectRow"><div class="pageSelectSmall current">1</div><a href="/song/2580-ghost-town/2/"><div class="pageSelectSmall">2</div></a><a href="/song/2580-ghost-town/122/"><div class="pageSelectSmall">122</div></a></div>
+    `;
+
+    const restore = mockFetch(async () => new Response(html, { status: 200 }));
+    try {
+      const res = await scrapeSongRatingsPage("2580-ghost-town", 1);
+      expect(res.totalPages).toBe(122);
+      expect(res.ratings[0]?.displayName).toBe("fan");
+      expect(res.ratings[0]?.subscriber).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+});
